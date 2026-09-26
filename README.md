@@ -1,3 +1,106 @@
-# lnmp
+# LNMP 一键安装
 
-linux下一键自动安装nginx、mongodb、php、xqkeji(新齐低代码开发框架扩展）
+Linux 下一键自动安装 nginx（含 ACME 自动 HTTPS 模块）、MongoDB、PHP-FPM、Composer、PIE、
+PHP 扩展（zip / mongodb）与 xqkeji（新齐低代码开发框架扩展），并接管服务启停。
+
+支持系统（自动探测，按包管理器分家族，见 `lib/os.sh`）：
+
+| 家族 | 系统 | 包管理器 | nginx / PHP | MongoDB |
+|---|---|---|---|---|
+| debian | Debian 11/12/13、Ubuntu 20.04/22.04/24.04 及衍生版 | apt | 源码编译（可选 apt 路线） | 官方 tarball（debianXX/ubuntuXX） |
+| rhel | RHEL/Rocky/AlmaLinux/CentOS 8/9、Fedora、openEuler 22.03/24.03 | dnf/yum | 源码编译（固定） | 官方 tarball（rhelXX，自动回退） |
+
+- RHEL 家族自动启用 EPEL / CRB 仓库（openEuler 无 EPEL 时仅告警不中断）。
+- openEuler 无官方 MongoDB 构建，脚本先试 rhel8、失败自动回退 rhel93（实测可用）。
+- 容器等无 systemd 环境同样支持：服务启停自动切换为二进制直启路径。
+
+## 快速开始
+
+```bash
+# 1. 按需修改 config.ini（版本号、acme 域名、MongoDB 账号等）
+# 2. 全量安装（幂等，可重复执行，已装组件自动跳过）
+sudo ./install.sh
+
+# 只体检不安装
+sudo ./install.sh --check
+```
+
+## 组件与安装路径
+
+| 组件 | 路径 | 端口 | 方式 |
+|---|---|---|---|
+| nginx | /usr/local/nginx | 80 | 源码编译 + ngx_http_acme_module（动态模块） |
+| MongoDB | /usr/local/mongodb | 27017 | 官方预编译 tarball + mongosh 单独下载 |
+| PHP-FPM | /usr/local/php | 9000 | 源码编译（gd 编译期启用；opcache PHP 8.5 起内置） |
+| Composer / PIE | /usr/local/composer、/usr/local/pie | - | phar |
+| PHP 扩展 | - | - | PIE 装 zip、mongodb；xqkeji 为预编译 .so 直接部署 |
+
+安装状态记录在 `/usr/local/lnmp/state/`，完整日志在 `/var/log/lnmp-install.log`，
+源码包缓存在 `/usr/local/src/lnmp/`。
+
+## 服务管理（systemd 与容器通用）
+
+```bash
+sudo ./ctrl.sh status              # 查看全部
+sudo ./ctrl.sh restart             # 全部重启
+sudo ./ctrl.sh stop nginx mongodb  # 只停指定服务（nginx / php-fpm / mongodb）
+```
+
+mongodb 的 start/restart 走安全启动：自动清理孤儿进程、修正数据目录属主、清陈旧锁，
+必要时 `--repair` 兜底。
+
+## 选装与单步执行
+
+```bash
+sudo ./install.sh --list                 # 列出可单独安装的组件
+sudo ./install.sh nginx php              # 只装指定组件（自动补对应系统依赖）
+sudo ./install.sh --download-only        # 先把源码包下齐（校验 sha256），之后离线再装
+sudo ./scripts/30-php.sh                 # 每个 scripts/*.sh 都可绕开主入口单独执行
+sudo ./scripts/00-deps.sh php            # 只装 PHP 的编译依赖
+```
+
+## 配置（config.ini）
+
+所有版本号与开关集中在 `config.ini`，改完直接重跑 `install.sh` 即可，要点：
+
+- `nginx_install`：`src`（默认，全系统通用）/ `apt`（nginx.org 官方 deb 包 + 预编译
+  acme 模块，**仅 Debian/Ubuntu**，RHEL 家族填 apt 会在预检报错中止）。
+  两条路线互斥，切换时自动清理已装的另一路线。
+- `nginx_acme` / `acme_domains`：ACME 自动 HTTPS（仅 HTTP-01），域名空格分隔；
+  src 路线编译 acme 模块需 Rust ≥1.81，脚本自动经 rsproxy.cn 安装。
+- `mongodb_distro=auto`：按系统自动挑官方构建名，首选不可用自动回退重试；
+  跨构建回退时 `mongodb_sha256` 不要 pin 死。
+- `mongodb_root_user/pass`：安装后初始化的管理员账号，留空则跳过（裸跑无认证）。
+- `php` 与 `xqkeji` 必须配对（当前 8.5.10 + v1.1.5-php8.5），否则 .so 加载失败。
+- `pie_extensions`：用 packagist 包名（`pecl/zip`、`mongodb/mongodb-extension`），
+  gd 是核心 bundled 扩展 PIE 装不了，已由 PHP 编译期 `--enable-gd` 打开。
+
+## 代码结构
+
+```
+install.sh          主入口（只编排，活都在 scripts/ 下）
+config.ini          所有版本号与开关
+ctrl.sh             服务管理 start/stop/restart/status
+lib/common.sh       常量、日志、下载、幂等状态
+lib/os.sh           发行版探测 + apt/dnf 包管理抽象
+lib/config.sh       读 config.ini（键名白名单，不 eval）
+lib/preflight.sh    环境预检（root、系统家族、架构、端口、磁盘）
+lib/service.sh      服务启停（systemd / 无 systemd 双路径）
+scripts/00-deps.sh  系统依赖库（按家族包表，apt/dnf 分组安装）
+scripts/10-nginx.sh       nginx（src / apt 双路线）
+scripts/20-mongodb.sh     MongoDB + mongosh + 账号初始化
+scripts/30-php.sh         PHP 编译
+scripts/40~60-*.sh        Composer / PIE / PHP 扩展
+scripts/70-xqkeji.sh      xqkeji 扩展
+scripts/80-nginx-conf.sh  nginx 配置骨架 + 默认站点
+scripts/90-systemd.sh     systemd 单元 + 开机自启（SELinux/防火墙检测告警）
+scripts/99-verify.sh      安装结果自检
+```
+
+## 设计约定
+
+1. **幂等**：已装版本记在 `state/<名>.version`，重复执行自动跳过。
+2. **不 eval 配置**：ini 键名走白名单，值只做赋值。
+3. **sha256 有则校验**，留空跳过；下载支持多镜像/多构建候选自动回退。
+4. **国内源优先**：gitcode/gitee 镜像、TUNA nginx apt 仓库、rsproxy Rust 工具链，均可在
+   config.ini 换回官方源。

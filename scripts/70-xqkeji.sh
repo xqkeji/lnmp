@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# ============================================================================
+# scripts/70-xqkeji.sh - 部署 xqkeji 扩展
+#
+# 两个反直觉的点，决定了它不能按常规方式装：
+#   1. gitee 仓库里只有预编译二进制（xqkeji.so），没有 C 源码
+#      -> 没法 phpize 编译，只能把 .so 直接放进 extension_dir
+#   2. 它没发布到 packagist
+#      -> PIE 也装不了
+#
+# 因此这里做的是：下载仓库 tarball -> 校验 .so 的 PHP API 版本 -> 部署 + 写 conf.d
+#
+# 单独执行：sudo ./scripts/70-xqkeji.sh
+# ============================================================================
+
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/lib/common.sh"
+source "$LIB_DIR/config.sh"
+source "$LIB_DIR/preflight.sh"
+
+fetch_xqkeji() {
+  step "下载 xqkeji ${CFG_xqkeji}"
+  fetch "https://raw.gitcode.com/xqkeji/php-xqkeji/archive/refs/heads/${CFG_xqkeji}.tar.gz" \
+        "$SRC_DIR/php-xqkeji-${CFG_xqkeji}.tar.gz" ""
+}
+
+install_xqkeji() {
+  step "部署 xqkeji 扩展（${CFG_xqkeji}）"
+
+  local tag="${CFG_xqkeji}"
+  local php_bin="$PREFIX_PHP/bin/php"
+  local ext_dir
+  ext_dir="$("$PREFIX_PHP/bin/php-config" --extension-dir)"
+
+  # tag 里的 -phpX.Y 必须和实际装的 PHP 对得上
+  local php_mm
+  php_mm="$("$php_bin" -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;')"
+  if [[ $tag != *"-php${php_mm}" ]]; then
+    warn "  tag '$tag' 与已安装 PHP ${php_mm} 不匹配，继续但很可能加载失败"
+  fi
+
+  if [[ -f $ext_dir/xqkeji.so && $(installed_version xqkeji) == "$tag" ]]; then
+    info "  已是 $tag，跳过"
+    return 0
+  fi
+
+  local tarball="$SRC_DIR/php-xqkeji-${tag}.tar.gz"
+  [[ -s $tarball ]] || fetch_xqkeji
+
+  rm -rf "$SRC_DIR/php-xqkeji-${tag}"
+  mkdir -p "$SRC_DIR/php-xqkeji-${tag}"
+  tar -xzf "$tarball" -C "$SRC_DIR/php-xqkeji-${tag}" --strip-components=1
+
+  local so="$SRC_DIR/php-xqkeji-${tag}/xqkeji.so"
+  [[ -f $so ]] || die "压缩包里没有 xqkeji.so，请检查 tag ${tag} 是否正确"
+
+  # 扩展的 ABI 必须和当前 PHP 一致，否则 PHP 会拒绝加载。
+  # 最可靠的判断是"直接让 PHP 试着加载"——比从二进制里 grep 一个 8 位数字准得多
+  # （grep 极易命中日期/时间戳等无关串，导致误判不匹配）。
+  # 若 ABI 不兼容，PHP 会输出 "Unable to initialize module" + "module API" 这类字样。
+  local load_out api_php
+  # 取当前 PHP 的 API 号（仅用于提示信息，取不到也不影响安装）。
+  # 优先 php-config --phpapi；取不到（某些 8.5 snapshot 的 php-config 对该选项返回非 0）
+  # 则回退到 php -i 里的 "PHP API =>" 行。两步都非致命。
+  api_php="$("$PREFIX_PHP/bin/php-config" --phpapi 2>/dev/null)" || true
+  [[ -n $api_php ]] || api_php="$("$php_bin" -i 2>/dev/null | grep -i 'PHP API' | head -1 | grep -oE '20[0-9]{6}')"
+  load_out="$("$php_bin" -n -d "extension=$so" -r 'echo "XQKEJI_OK";' 2>&1)" || true
+  if [[ $load_out == *"Unable to initialize module"* || \
+        ( $load_out == *"module API"* && $load_out == *"compiled with"* ) ]]; then
+    local so_api php_api_compiled
+    so_api=$(printf '%s\n' "$load_out" | grep -oE 'Module compiled with module API=[0-9]+' | grep -oE '[0-9]+$')
+    php_api_compiled=$(printf '%s\n' "$load_out" | grep -oE 'PHP +compiled with module API=[0-9]+' | grep -oE '[0-9]+$')
+    die "xqkeji.so 与当前 PHP 的 ABI 不兼容（.so API=${so_api:-?}  PHP API=${php_api_compiled:-${api_php:-?}}），放弃安装：
+$load_out"
+  fi
+  if [[ $load_out != *"XQKEJI_OK"* ]]; then
+    die "xqkeji.so 加载异常，放弃安装：
+$load_out"
+  fi
+  info "  ABI 兼容性校验通过（PHP API ${api_php:-未知} 成功加载 xqkeji.so）"
+
+  install -m 0755 "$so" "$ext_dir/xqkeji.so"
+
+  # 用独立 conf.d 文件启用，比改动主 php.ini 干净
+  printf '%s\n' "extension=xqkeji.so" > "$PREFIX_PHP/etc/conf.d/xqkeji.ini"
+  mark_installed xqkeji "$tag"
+
+  info "  xqkeji ${tag} 部署完成"
+}
+
+step_xqkeji() {
+  fetch_xqkeji
+  install_xqkeji
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  bootstrap
+  step_xqkeji
+fi

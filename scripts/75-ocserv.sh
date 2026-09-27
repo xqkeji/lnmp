@@ -19,6 +19,8 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/lib/common.sh"
 source "$LIB_DIR/config.sh"
 source "$LIB_DIR/preflight.sh"
 source "$LIB_DIR/service.sh"
+# 防火墙收紧（step_ocserv 收尾调用 step_firewall；自带重复 source 守卫）
+source "$STEPS_DIR/78-firewall.sh"
 
 readonly OCSERV_BIN_PATH="/usr/local/sbin/ocserv"
 readonly OCSERV_PASSWD="$OCSERV_SYS/ocpasswd"
@@ -174,14 +176,13 @@ setup_ocserv_forward() {
   fi
 
   local port="${CFG_ocserv_port:-4443}"
-  if have_systemd && command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+  if has_firewalld; then
     firewall-cmd --permanent --add-port="${port}/tcp" --add-port="${port}/udp" \
       --add-masquerade >/dev/null 2>&1 || true
     firewall-cmd --reload >/dev/null 2>&1 || true
-    info "  firewalld：已放行 ${port}/tcp+udp 并开启 MASQUERADE"
+    info "  firewalld：已放行 ${port}/tcp+udp 并开启 MASQUERADE（完整收紧见 78-firewall.sh，稍后自动执行）"
   else
-    info "  未检测到运行中的 firewalld。客户端出网请确认 NAT 伪装，例如 iptables："
-    info "    iptables -t nat -A POSTROUTING -s ${CFG_ocserv_network:-10.10.10.0}/24 -o <外网网卡> -j MASQUERADE"
+    info "  未检测到运行中的 firewalld：iptables 的 NAT 伪装与端口收紧由收尾的 78-firewall.sh 自动配置"
   fi
 }
 
@@ -268,6 +269,10 @@ step_ocserv() {
   else
     warn "  ocserv 启动失败。排查：journalctl -xeu ocserv 或 ${OCSERV_BIN_PATH} -c ${OCSERV_SYS}/ocserv.conf"
   fi
+
+  # 收尾：收紧主机防火墙（对外仅 80/443/VPN 端口，SSH 只留本机 + VPN 段）。
+  # step_firewall 自带安全闸——ocserv 没在跑就不会限制 22，不会把远程 SSH 锁死
+  step_firewall
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then

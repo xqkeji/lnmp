@@ -34,6 +34,19 @@ step_verify() {
     fi
   fi
 
+  # 防火墙收紧状态（scripts/78-firewall.sh 的策略：对外仅 80/443/ocserv 端口）
+  local fw=""
+  if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    if firewall-cmd --query-service=ssh >/dev/null 2>&1; then
+      fw="firewalld：SSH 仍对外开放（ocserv 就绪后重跑 78-firewall.sh 收紧）"
+    else
+      fw="firewalld：对外仅 80/443/${CFG_ocserv_port:-4443}，SSH 仅限本机 + VPN 段"
+    fi
+  elif command -v iptables >/dev/null 2>&1 && iptables -S LNMP-IN >/dev/null 2>&1; then
+    fw="iptables（LNMP-IN 链）：对外仅 80/443/${CFG_ocserv_port:-4443}，其余端口（含 27017）拒绝"
+  fi
+  if [[ -n $fw ]]; then info "  防火墙  $fw"; fi
+
   # mongod 是否真的在运行（上面的 --version 只是看版本号，不代表进程在跑）
   if svc_status mongodb; then
     info "  mongod 运行中"

@@ -38,8 +38,25 @@ sudo ./install.sh --check
 
 ocserv 是 Cisco AnyConnect 兼容的 SSL VPN：客户端地址段 `10.10.10.0/24`，下发 DNS
 `119.29.29.29` / `223.5.5.5`（均可在 config.ini 改）；安装时交互式创建首个账号，
-自签服务端证书（certtool 生成），自动开 IPv4 转发，firewalld 在跑时自动放行端口并开
-MASQUERADE。客户端连接地址为 `https://<服务器IP>:4443/`（AnyConnect / OpenConnect）。
+自签服务端证书（certtool 生成），自动开 IPv4 转发。客户端连接地址为
+`https://<服务器IP>:4443/`（AnyConnect / OpenConnect）。
+
+## 防火墙收紧（ocserv 装完自动应用）
+
+ocserv 就绪后 `scripts/78-firewall.sh` 自动收紧主机防火墙（firewalld / iptables
+双路径自动识别，规则尽力持久化，重启仍生效）：
+
+- 对外只放行 **80 / 443 / 4443**（tcp，VPN 端口含 udp），其余端口（含 MongoDB
+  27017、PHP-FPM 9000）一律拒绝。
+- **22/SSH 不再接受外部直连**：只放行本机回环与 VPN 段 `10.10.10.0/24`——外部
+  工具必须先连上 ocserv 才能 SSH 服务器。已建立的 SSH 会话不受影响。
+- 安全闸：ocserv 未安装或未运行时，本次不收紧 22（防止远程失联），其余策略照旧。
+- VPN 客户端出网的 MASQUERADE 自动配置（firewalld 或 iptables nat）。
+
+```bash
+sudo ./scripts/78-firewall.sh        # 手动（重新）应用收紧策略
+sudo ./scripts/78-firewall.sh undo   # 应急还原：恢复 SSH 对外访问
+```
 
 安装状态记录在 `/usr/local/lnmp/state/`，完整日志在 `/var/log/lnmp-install.log`，
 源码包缓存在 `/usr/local/src/lnmp/`。
@@ -54,6 +71,10 @@ sudo ./ctrl.sh stop nginx mongodb  # 只停指定服务（nginx / php-fpm / mong
 
 mongodb 的 start/restart 走安全启动：自动清理孤儿进程、修正数据目录属主、清陈旧锁，
 必要时 `--repair` 兜底。
+
+nginx / php-fpm / mongod / ocserv 安装完成后都会 `systemctl enable` 设置开机自启
+（只 enable 实际装了的服务，`99-verify` 会逐项报告状态）；无 systemd 的容器环境改用
+`ctrl.sh` 手动管理。
 
 ## 选装与单步执行
 
@@ -103,6 +124,7 @@ scripts/30-php.sh         PHP 编译
 scripts/40~60-*.sh        Composer / PIE / PHP 扩展
 scripts/70-xqkeji.sh      xqkeji 扩展
 scripts/75-ocserv.sh      ocserv SSL VPN（源码编译 + 配置 + 账号 + 证书）
+scripts/78-firewall.sh    防火墙收紧（仅放行 80/443/VPN 端口，SSH 限本机+VPN 段；含 undo）
 scripts/80-nginx-conf.sh  nginx 配置骨架 + 默认站点
 scripts/90-systemd.sh     systemd 单元 + 开机自启（SELinux/防火墙检测告警）
 scripts/99-verify.sh      安装结果自检

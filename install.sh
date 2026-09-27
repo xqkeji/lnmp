@@ -32,6 +32,7 @@
 #   scripts/60-php-exts.sh PHP 扩展（PIE）
 #   scripts/70-xqkeji.sh   xqkeji 扩展
 #   scripts/75-ocserv.sh   ocserv SSL VPN（下载 + meson 编译 + 配置/账号/证书）
+#   scripts/78-firewall.sh 主机防火墙收紧（对外仅 80/443/ocserv 端口，SSH 限本机+VPN 段；ocserv 步骤自动调用）
 #   scripts/80-nginx-conf.sh nginx 配置骨架
 #   scripts/90-systemd.sh  systemd 单元 + 启动
 #   scripts/99-verify.sh   结果自检

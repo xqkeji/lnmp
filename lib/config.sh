@@ -41,7 +41,7 @@ load_config() {
   done < "$ini"
 
   local k v
-  for k in nginx mongodb php xqkeji composer pie; do
+  for k in nginx mongodb php xqkeji composer pie ocserv; do
     v="CFG_$k"
     [[ -n ${!v:-} ]] || die "$CONFIG_NAME 缺少必需配置：$k"
   done

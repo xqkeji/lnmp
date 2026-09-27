@@ -30,11 +30,13 @@ pkgs_for() {  # pkgs_for <组名>：按 OS_FAMILY 输出对应包名数组（eva
     common)
       # unzip：PIE 内部用 composer 下载 zip 格式的扩展包，php 没编 zip 扩展前
       # 必须有 unzip/7z 兜底（Debian 官方镜像预装了，最小化 Rocky/openEuler 没有）
+      # xz：ocserv 官方源码包是 tar.xz，最小化镜像里没有 xz 工具
+      # procps：lib/service.sh 的 pgrep 状态兜底依赖它（rocky:9 最小镜像不带）
       if os_is_debian; then printf '%s\n' \
-        build-essential autoconf automake libtool bison re2c pkg-config unzip \
-        git curl wget ca-certificates tar gzip findutils
+        build-essential autoconf automake libtool bison re2c pkg-config unzip xz-utils \
+        procps git curl wget ca-certificates tar gzip findutils
       else printf '%s\n' \
-        gcc gcc-c++ make autoconf automake libtool bison unzip \
+        gcc gcc-c++ make autoconf automake libtool bison unzip xz procps-ng \
         git curl wget ca-certificates tar gzip findutils
       fi ;;
     nginx_src)
@@ -60,6 +62,13 @@ pkgs_for() {  # pkgs_for <组名>：按 OS_FAMILY 输出对应包名数组（eva
       # mongod 运行时链接 libc/libcrypto/libssl/libcurl；最小化系统里 libcurl 未必有
       if os_is_debian; then printf '%s\n' libcurl4 libssl3
       else printf '%s\n' libcurl openssl; fi ;;
+    ocserv)
+      # ocserv 1.5+ 用 meson 构建；硬依赖只有 gnutls/nettle/libev，
+      # talloc/llhttp/protobuf-c 有内嵌兜底，不必装开发包
+      if os_is_debian; then printf '%s\n' libgnutls28-dev nettle-dev libev-dev \
+        libseccomp-dev meson ninja-build pkg-config libpam0g-dev
+      else printf '%s\n' gnutls-devel nettle-devel libev-devel \
+        libseccomp-devel meson ninja-build pam-devel; fi ;;
     *) die "未知依赖组：$group" ;;
   esac
 }
@@ -115,6 +124,19 @@ deps_mongodb() {
   install_group "MongoDB 运行时依赖" mongodb
 }
 
+deps_ocserv() {
+  # 单独选装 ocserv（bare 机器只跑 ./install.sh ocserv）时没有编译器，
+  # 先把 common 工具链补齐；pkg_install 幂等，全量安装时重复调用零开销
+  deps_common
+  install_group "ocserv 编译依赖" ocserv
+  # meson 探测依赖走 pkg-config；单独跑本组时 common 组可能没装过
+  os_is_rhel && pkg_install_any "pkg-config" pkgconf-pkg-config pkgconfig
+  # certtool：给 ocserv 生成自签服务端证书用（gnutls 工具，装不上会在
+  # 75-ocserv.sh 里报明确错误）
+  if os_is_debian; then pkg_install_any "certtool（gnutls 工具）" gnutls-bin
+  else pkg_install_any "certtool（gnutls 工具）" gnutls-utils; fi
+}
+
 # --- 入口 -------------------------------------------------------------------
 step_deps() {
   step "安装系统依赖（${PKG}）"
@@ -122,6 +144,7 @@ step_deps() {
   deps_nginx
   deps_php
   deps_mongodb
+  deps_ocserv
   info "  依赖安装完成"
 }
 
@@ -134,6 +157,7 @@ if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
     nginx)    deps_nginx ;;
     php)      deps_php ;;
     mongodb)  deps_mongodb ;;
-    *)        die "用法：$0 [all|common|nginx|php|mongodb]" ;;
+    ocserv)   deps_ocserv ;;
+    *)        die "用法：$0 [all|common|nginx|php|mongodb|ocserv]" ;;
   esac
 fi

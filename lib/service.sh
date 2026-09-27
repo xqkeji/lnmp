@@ -19,6 +19,7 @@ declare -A SVC_UNIT=(
   [nginx]=nginx
   [php-fpm]=php-fpm
   [mongodb]=mongod
+  [ocserv]=ocserv
 )
 
 # 判断 systemd 是否真正在管理本机：光有 systemctl 二进制不够（openEuler 等
@@ -28,19 +29,46 @@ have_systemd() {
   command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]
 }
 
+# 是否存在非僵尸的同名进程。容器里 PID1 往往不 reap 子进程，daemon 化服务
+# 退出后会留下 comm 仍可被 pgrep 匹配的 zombie，直接 pgrep 会误判"还在跑"
+proc_running() {
+  local p s
+  for p in $(pgrep -x "$1" 2>/dev/null || true); do
+    s="$(awk '/^State:/{print $2}' "/proc/$p/status" 2>/dev/null)" || true
+    [[ $s != Z ]] && return 0
+  done
+  return 1
+}
+
 # --- 无 systemd 时的直接启停实现 -------------------------------------------
 direct_start_nginx()  { "$NGINX_BIN"; }
 direct_stop_nginx()   { "$NGINX_BIN" -s quit 2>/dev/null || true; }
-direct_status_nginx() { pgrep -x nginx >/dev/null 2>&1; }
+direct_status_nginx() { proc_running nginx; }
 
 direct_start_php_fpm()  { "$PREFIX_PHP/sbin/php-fpm" --daemonize --fpm-config "$PREFIX_PHP/etc/php-fpm.conf"; }
 direct_stop_php_fpm()   { pkill -x php-fpm 2>/dev/null || true; }
-direct_status_php_fpm() { pgrep -x php-fpm >/dev/null 2>&1; }
+direct_status_php_fpm() { proc_running php-fpm; }
 
 # mongod.conf 已配 processManagement.fork:true，直启会自己 daemon 化
 direct_start_mongodb()  { "$PREFIX_MONGODB/bin/mongod" --config "$PREFIX_MONGODB/mongod.conf"; }
 direct_stop_mongodb()   { "$PREFIX_MONGODB/bin/mongod" --config "$PREFIX_MONGODB/mongod.conf" --shutdown 2>/dev/null || pkill -x mongod 2>/dev/null || true; }
-direct_status_mongodb() { pgrep -x mongod >/dev/null 2>&1; }
+direct_status_mongodb() { proc_running mongod; }
+
+# ocserv 不带 -f 时自己 daemon 化（pid-file 写在 ocserv.conf 里）。
+# 进程名注意：1.5 起 master 叫 ocserv-main（另有 ocserv-sm/worker），不是 ocserv。
+# stop 要等旧 master 真正退出（端口释放）再返回，否则紧随的 start 会 bind 撞车
+direct_start_ocserv()  { /usr/local/sbin/ocserv --config "$OCSERV_SYS/ocserv.conf"; }
+direct_stop_ocserv() {
+  local i
+  pkill -x ocserv-main 2>/dev/null || true
+  for ((i = 0; i < 5; i++)); do
+    proc_running ocserv-main || return 0
+    sleep 1
+  done
+  pkill -9 -x ocserv-main 2>/dev/null || true
+  return 0
+}
+direct_status_ocserv() { proc_running ocserv-main; }
 
 # 判定服务是否真的在运行。
 # 不迷信 systemctl is-active 的退出码：在 Type=forking 单元、以及个别 systemd 版本下，
@@ -55,6 +83,7 @@ _svc_is_up() {
   local unit="$1" svc="$2"
   local proc="$svc"
   [[ $svc == mongodb ]] && proc=mongod   # mongod 进程名是 mongod 而非 mongodb
+  [[ $svc == ocserv  ]] && proc=ocserv-main   # ocserv master 进程名是 ocserv-main
   local i
   for ((i = 0; i < 5; i++)); do
     # 注意：必须用 if 包裹判定命令，不能写 "cmd && return 0"——
@@ -62,7 +91,7 @@ _svc_is_up() {
     if systemctl is-active --quiet "$unit" 2>/dev/null; then
       return 0
     fi
-    if pgrep -x "$proc" >/dev/null 2>&1; then
+    if proc_running "$proc"; then
       return 0
     fi
     sleep 1
@@ -119,6 +148,7 @@ enable_boot_services() {
   ( command -v nginx >/dev/null 2>&1 || [[ -x $PREFIX_NGINX/sbin/nginx ]] ) && units+=(nginx)
   [[ -x $PREFIX_PHP/sbin/php-fpm  ]]          && units+=(php-fpm)
   [[ -x $PREFIX_MONGODB/bin/mongod ]]         && units+=(mongod)
+  [[ -x /usr/local/sbin/ocserv ]]             && units+=(ocserv)
   ((${#units[@]})) || return 0
   systemctl daemon-reload 2>/dev/null || true
   systemctl enable "${units[@]}" >/dev/null 2>&1 || true

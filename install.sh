@@ -10,6 +10,7 @@
 #                                              apt 路线仅 Debian/Ubuntu；RHEL 家族固定源码编译
 #   MongoDB         /usr/local/mongodb   27017    官方预编译 tarball
 #   PHP (php-fpm)   /usr/local/php       9000     源码编译（含 gd）
+#   ocserv          /usr/local/sbin      4443     官网源码编译（meson；端口见 config.ini）
 #   Composer        /usr/local/composer  -        phar
 #   PIE             /usr/local/pie       -        phar
 #   PHP 扩展        zip / mongodb（PIE） + xqkeji（预编译 .so）
@@ -30,6 +31,7 @@
 #   scripts/50-pie.sh      PIE
 #   scripts/60-php-exts.sh PHP 扩展（PIE）
 #   scripts/70-xqkeji.sh   xqkeji 扩展
+#   scripts/75-ocserv.sh   ocserv SSL VPN（下载 + meson 编译 + 配置/账号/证书）
 #   scripts/80-nginx-conf.sh nginx 配置骨架
 #   scripts/90-systemd.sh  systemd 单元 + 启动
 #   scripts/99-verify.sh   结果自检
@@ -50,7 +52,7 @@ source "$LIB_DIR/service.sh"
 # ---------------------------------------------------------------------------
 # 步骤清单：别名 -> 入口函数（数组顺序即执行顺序）
 # ---------------------------------------------------------------------------
-readonly STEP_ALIASES=(deps nginx mongodb mongosh php composer pie phpext xqkeji nginxconf systemd start mongoinit verify)
+readonly STEP_ALIASES=(deps nginx mongodb mongosh php composer pie phpext xqkeji ocserv nginxconf systemd start mongoinit verify)
 
 declare -A STEP_FUNCS=(
   [deps]=step_deps
@@ -62,6 +64,7 @@ declare -A STEP_FUNCS=(
   [pie]=step_pie
   [phpext]=step_php_exts
   [xqkeji]=step_xqkeji
+  [ocserv]=step_ocserv
   [nginxconf]=step_nginx_conf
   [systemd]=step_systemd
   [start]=step_start
@@ -79,6 +82,7 @@ declare -A STEP_DESC=(
   [pie]="PIE"
   [phpext]="PHP 扩展 zip/mongodb（PIE）"
   [xqkeji]="xqkeji 扩展"
+  [ocserv]="ocserv SSL VPN（官网源码编译 + 配置 + 账号）"
   [nginxconf]="nginx 主配置 + 默认站点"
   [systemd]="systemd 单元 + 开机自启"
   [start]="启动全部服务"
@@ -166,7 +170,7 @@ run_steps() {
 run_download() {
   local -a funcs=(
     fetch_mongodb fetch_mongosh fetch_php
-    fetch_composer fetch_pie fetch_xqkeji
+    fetch_composer fetch_pie fetch_xqkeji fetch_ocserv
   )
   [[ ${CFG_nginx_install:-apt} == src ]] && funcs+=(fetch_nginx fetch_nginx_acme)
   local fn
@@ -240,6 +244,7 @@ main() {
           nginx)              ports+=(80) ;;
           php)                ports+=(9000) ;;
           mongodb | mongosh)  ports+=(27017) ;;
+          ocserv)             ports+=("${CFG_ocserv_port:-4443}") ;;
         esac
       done
       ((${#ports[@]})) && require_ports "${ports[@]}"

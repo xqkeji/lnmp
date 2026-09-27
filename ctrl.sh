@@ -5,7 +5,7 @@
 # 用法：
 #   sudo ./ctrl.sh <动作> [服务...]
 #   动作：start | stop | restart | status
-#   服务：nginx php-fpm mongodb（缺省 = 全部）
+#   服务：nginx php-fpm mongodb ocserv（缺省 = 全部）
 #
 # 有 systemd 走 systemctl；无 systemd（容器）走各组件二进制直启。
 # 单独执行：sudo ./ctrl.sh restart
@@ -14,7 +14,7 @@
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/lib" && pwd)/common.sh"
 source "$LIB_DIR/service.sh"
 
-readonly ALL_SVCS=(nginx php-fpm mongodb)
+readonly ALL_SVCS=(nginx php-fpm mongodb ocserv)
 
 usage() {
   cat <<EOF
@@ -26,7 +26,7 @@ usage() {
   restart  重启
   status   查看运行状态
 
-服务（缺省=全部）：nginx  php-fpm  mongodb
+服务（缺省=全部）：nginx  php-fpm  mongodb  ocserv
 
 示例：
   sudo ./ctrl.sh restart            # 全部重启
@@ -47,7 +47,7 @@ main() {
   local t ok
   for t in "${targets[@]}"; do
     case "$t" in
-      nginx | php-fpm | mongodb) ;;
+      nginx | php-fpm | mongodb | ocserv) ;;
       *) warn "未知服务：$t，跳过"; continue ;;
     esac
 

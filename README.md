@@ -1,7 +1,7 @@
 # LNMP 一键安装
 
 Linux 下一键自动安装 nginx（含 ACME 自动 HTTPS 模块）、MongoDB、PHP-FPM、Composer、PIE、
-PHP 扩展（zip / mongodb）与 xqkeji（新齐低代码开发框架扩展），并接管服务启停。
+PHP 扩展（zip / mongodb）、xqkeji（新齐低代码开发框架扩展）与 ocserv（SSL VPN），并接管服务启停。
 
 支持系统（自动探测，按包管理器分家族，见 `lib/os.sh`）：
 
@@ -34,6 +34,12 @@ sudo ./install.sh --check
 | PHP-FPM | /usr/local/php | 9000 | 源码编译（gd 编译期启用；opcache PHP 8.5 起内置） |
 | Composer / PIE | /usr/local/composer、/usr/local/pie | - | phar |
 | PHP 扩展 | - | - | PIE 装 zip、mongodb；xqkeji 为预编译 .so 直接部署 |
+| ocserv | /usr/local/sbin | 4443(tcp/udp) | 官网（infradead）源码编译，meson 构建 |
+
+ocserv 是 Cisco AnyConnect 兼容的 SSL VPN：客户端地址段 `10.10.10.0/24`，下发 DNS
+`119.29.29.29` / `223.5.5.5`（均可在 config.ini 改）；安装时交互式创建首个账号，
+自签服务端证书（certtool 生成），自动开 IPv4 转发，firewalld 在跑时自动放行端口并开
+MASQUERADE。客户端连接地址为 `https://<服务器IP>:4443/`（AnyConnect / OpenConnect）。
 
 安装状态记录在 `/usr/local/lnmp/state/`，完整日志在 `/var/log/lnmp-install.log`，
 源码包缓存在 `/usr/local/src/lnmp/`。
@@ -43,7 +49,7 @@ sudo ./install.sh --check
 ```bash
 sudo ./ctrl.sh status              # 查看全部
 sudo ./ctrl.sh restart             # 全部重启
-sudo ./ctrl.sh stop nginx mongodb  # 只停指定服务（nginx / php-fpm / mongodb）
+sudo ./ctrl.sh stop nginx mongodb  # 只停指定服务（nginx / php-fpm / mongodb / ocserv）
 ```
 
 mongodb 的 start/restart 走安全启动：自动清理孤儿进程、修正数据目录属主、清陈旧锁，
@@ -74,6 +80,10 @@ sudo ./scripts/00-deps.sh php            # 只装 PHP 的编译依赖
 - `php` 与 `xqkeji` 必须配对（当前 8.5.10 + v1.1.5-php8.5），否则 .so 加载失败。
 - `pie_extensions`：用 packagist 包名（`pecl/zip`、`mongodb/mongodb-extension`），
   gd 是核心 bundled 扩展 PIE 装不了，已由 PHP 编译期 `--enable-gd` 打开。
+- `ocserv_port` / `ocserv_network` / `ocserv_netmask` / `ocserv_dns`：VPN 监听端口、
+  客户端地址段与下发 DNS；`ocserv_user/pass` 留空则安装时交互式建号（非交互环境留空
+  即跳过，之后用 `ocpasswd -c /etc/ocserv/ocpasswd <用户名>` 添加）。
+  官网只提供 ftp:// 下载，国内不通时可填 `ocserv_url` 镜像整段 URL。
 
 ## 代码结构
 
@@ -92,6 +102,7 @@ scripts/20-mongodb.sh     MongoDB + mongosh + 账号初始化
 scripts/30-php.sh         PHP 编译
 scripts/40~60-*.sh        Composer / PIE / PHP 扩展
 scripts/70-xqkeji.sh      xqkeji 扩展
+scripts/75-ocserv.sh      ocserv SSL VPN（源码编译 + 配置 + 账号 + 证书）
 scripts/80-nginx-conf.sh  nginx 配置骨架 + 默认站点
 scripts/90-systemd.sh     systemd 单元 + 开机自启（SELinux/防火墙检测告警）
 scripts/99-verify.sh      安装结果自检

@@ -25,6 +25,14 @@ step_verify() {
   ver=$("$PREFIX_MONGODB/bin/mongod" --version | sed -n 1p) || true; info "  ${ver}"
   ver=$(composer --version | sed -n 1p) || true;                     info "  ${ver}"
   ver=$(pie --version | sed -n 1p) || true;                          info "  ${ver}"
+  if [[ -x /usr/local/sbin/ocserv ]]; then
+    ver=$(/usr/local/sbin/ocserv --version 2>&1 | sed -n 1p) || true; info "  ${ver}"
+    if svc_status ocserv; then
+      info "  ocserv 运行中（AnyConnect 客户端连 https://<服务器IP>:${CFG_ocserv_port:-4443}/）"
+    else
+      warn "  ocserv 未运行（启动：sudo ./ctrl.sh start ocserv）"
+    fi
+  fi
 
   # mongod 是否真的在运行（上面的 --version 只是看版本号，不代表进程在跑）
   if svc_status mongodb; then
@@ -57,7 +65,8 @@ step_verify() {
               php      ${PREFIX_PHP}
               composer ${PREFIX_COMPOSER}
               pie      ${PREFIX_PIE}
-   端口       nginx ${PORT_NGINX} / php-fpm ${PORT_PHP_FPM} / mongodb ${PORT_MONGODB}
+              ocserv   /usr/local/sbin（配置: ${OCSERV_SYS}）
+   端口       nginx ${PORT_NGINX} / php-fpm ${PORT_PHP_FPM} / mongodb ${PORT_MONGODB} / ocserv ${CFG_ocserv_port:-4443}
    站点根目录 $([[ ${CFG_nginx_install:-apt} == apt ]] && echo /usr/share/nginx/html || echo ${PREFIX_NGINX}/html)
    日志       ${LOG_FILE}
 ============================================================================
@@ -76,11 +85,12 @@ EOF
 
   if have_systemd; then
     local u enabled
-    for u in nginx php-fpm mongod; do
+    for u in nginx php-fpm mongod ocserv; do
       case "$u" in
         nginx)   command -v nginx >/dev/null 2>&1 || [[ -x $PREFIX_NGINX/sbin/nginx ]] || continue ;;
         php-fpm) [[ -x $PREFIX_PHP/sbin/php-fpm  ]] || continue ;;
         mongod)  [[ -x $PREFIX_MONGODB/bin/mongod ]] || continue ;;
+        ocserv)  [[ -x /usr/local/sbin/ocserv ]] || continue ;;
       esac
       if systemctl is-enabled "$u" >/dev/null 2>&1; then enabled="已启用"; else enabled="未启用"; fi
       printf '  %-8s %s\n' "$u" "$enabled"

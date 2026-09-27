@@ -27,6 +27,8 @@ readonly PREFIX_MONGODB="/usr/local/mongodb"
 readonly PREFIX_PHP="/usr/local/php"
 readonly PREFIX_COMPOSER="/usr/local/composer"
 readonly PREFIX_PIE="/usr/local/pie"
+# ocserv 用 meson 装进 /usr/local 的 sbin/bin（无独立前缀目录）；配置统一放 /etc/ocserv
+readonly OCSERV_SYS="/etc/ocserv"
 
 # apt 路线（nginx_install=apt）使用 nginx.org 官方包的标准路径（仅 apt 路线下引用）
 readonly NGINX_BIN="/usr/sbin/nginx"            # apt 安装后二进制位置
@@ -116,7 +118,7 @@ port_owned_by_us() {
   local owner; owner="$(port_owner "$1")"
   [[ -z $owner ]] && return 1
   case "$owner" in
-    nginx | php-fpm | php-fpm* | mongod) return 0 ;;
+    nginx | php-fpm | php-fpm* | mongod | ocserv-main) return 0 ;;
     *) return 1 ;;
   esac
 }

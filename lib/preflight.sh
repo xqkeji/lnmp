@@ -20,9 +20,6 @@ preflight() {
   step "预检运行环境"
 
   [[ $EUID -eq 0 ]] || die "请以 root 执行：sudo $0"
-  need_cmd curl
-  need_cmd tar
-  need_cmd sha256sum
 
   detect_os
   case "$OS_FAMILY" in
@@ -31,6 +28,16 @@ preflight() {
     *) die "本脚本支持 Debian/Ubuntu 与 RHEL/Rocky/Alma/CentOS/openEuler，当前是 ${OS_PRETTY}" ;;
   esac
   info "  系统：${OS_PRETTY}（家族 ${OS_FAMILY}，包管理器 ${PKG}）"
+
+  # 最小化镜像（如 debian:12）可能连 curl 都没有：先顺手用系统包管理器补装，
+  # 补不上（离线/未知发行版）再由 need_cmd 给出明确报错
+  if ! command -v curl >/dev/null 2>&1; then
+    warn "  缺少 curl，尝试用 ${PKG} 自动安装"
+    pkg_install "下载工具" curl ca-certificates || true
+  fi
+  need_cmd curl
+  need_cmd tar
+  need_cmd sha256sum
 
   # MongoDB 官方 tarball 只发了 x86_64 / aarch64，这里限定 x86_64 以免选错包
   ARCH="$(uname -m)"

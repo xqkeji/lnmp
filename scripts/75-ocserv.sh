@@ -7,7 +7,8 @@
 #   config_ocserv       生成 /etc/ocserv/ocserv.conf + 自签证书 + PAM 无关的
 #                       plain[passwd] 账号文件；开 IPv4 转发；firewalld 放行+伪装
 #   ocserv_create_user  创建首个 VPN 账号：交互式直接走 ocpasswd 原生输密；
-#                       非交互用 config.ini 的 ocserv_user/ocserv_pass；都没有则跳过
+#                       非交互用 config.ini 的 ocserv_user/ocserv_pass；都没有则跳过。
+#                       账号文件里已有账号时不重建（见函数内注释），升级重跑安全
 #   step_ocserv         依赖 + 以上全部 + systemd 单元 + 启动
 #
 # 监听端口 / 客户端网段 / 下发 DNS 全部来自 config.ini（ocserv_* 键）。
@@ -187,10 +188,40 @@ setup_ocserv_forward() {
 }
 
 # --- 账号 -------------------------------------------------------------------
+# 已经有账号就到此为止：ocserv 的账号是运行期数据，升级/重跑时最常见的状态是
+# "账号早在第一次安装时就建好了"。原来这里无条件创建，同名账号会被静默重置密码
+# （机器上用 ocpasswd 手工改过的密码会被 config.ini 里的旧值顶掉），交互模式还会
+# 每次重复追问用户名。
+# 例外：config.ini 点名了一个账号文件里不存在的用户 —— 那是明确的新增意图，照建。
 # 优先级：config.ini 给了 ocserv_user(+pass) -> 非交互直写；
 #         终端交互 -> 用户名回显确认 + ocpasswd 原生输密；都没有 -> 跳过并提示。
 ocserv_create_user() {
   local user="${CFG_ocserv_user:-}" pass="${CFG_ocserv_pass:-}"
+
+  local names="" n=0 u exists=0
+  if [[ -s $OCSERV_PASSWD ]]; then
+    # 按 : 分字段取第一列，逐字符比对，避免 grep -w 把 vpn.admin 这类名字截断误判
+    names="$(awk -F: 'NF && $1 != "" {print $1}' "$OCSERV_PASSWD" | tr '\n' ' ')"
+    n=$(awk -F: 'NF && $1 != "" {c++} END {print c+0}' "$OCSERV_PASSWD")
+  fi
+
+  if (( n > 0 )); then
+    if [[ -n $user ]]; then
+      for u in $names; do
+        if [[ $u == "$user" ]]; then exists=1; break; fi
+      done
+    fi
+    if (( exists )); then
+      info "  账号 ${user} 已存在（共 ${n} 个：${names% }），不重复创建"
+      info "  要改密码：ocpasswd -c $OCSERV_PASSWD $user"
+      return 0
+    fi
+    if [[ -z $user ]]; then
+      info "  已有 ${n} 个 VPN 账号（${names% }），本次不新建（要新增就填 config.ini 的 ocserv_user）"
+      return 0
+    fi
+    info "  已有 ${n} 个账号且不含 ${user}，按 config.ini 新增该账号"
+  fi
 
   if [[ -z $user ]] && [[ -t 0 ]]; then
     info "  （可留空跳过，之后随时用 ocpasswd 添加账号）"

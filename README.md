@@ -117,6 +117,8 @@ sudo ./scripts/00-deps.sh php            # 只装 PHP 的编译依赖
 - `ocserv_port` / `ocserv_network` / `ocserv_netmask` / `ocserv_dns`：VPN 监听端口、
   客户端地址段与下发 DNS；`ocserv_user/pass` 留空则安装时交互式建号（非交互环境留空
   即跳过，之后用 `ocpasswd -c /etc/ocserv/ocpasswd <用户名>` 添加）。
+  `/etc/ocserv/ocpasswd` 里**已有账号就不再建号**：升级/重跑不会重复追问，也不会用
+  config.ini 里的密码顶掉你手工改过的密码；只有点名一个文件里没有的用户名才当新增。
   官网只提供 ftp:// 下载，国内不通时可填 `ocserv_url` 镜像整段 URL。
 
 ## 代码结构

@@ -222,8 +222,10 @@ fetch_nginx_acme() {
   die "ngx_http_acme_module ${mver} 所有下载源均失败（含内置国内代理 ghproxy.net/ghfast.top 等）。
   可手动下载并放到：$tarball
     GitHub: https://github.com/nginx/nginx-acme/releases/download/v${mver}/nginx-acme-${mver}.tar.gz
-  或在 config.ini 配置以下任一项（推荐用你自己的 Gitee Release，国内最稳）：
+  或在 config.ini 配置以下任一项（推荐用你自己的镜像整段 URL）：
     nginx_acme_url=https://raw.gitcode.com/xqkeji/nginx-acme/archive/refs/heads/v${mver}.tar.gz
+      注意：gitcode 归档的反爬按出口 IP 判，云主机上即使带浏览器 UA 也会 418，
+      这种情况改用 git clone 出来的目录、或自己 Release/对象存储的直链更稳
     nginx_acme_mirror=https://ghproxy.net/https://github.com
   配置/放置后重新运行 sudo ./install.sh"
 }

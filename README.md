@@ -99,8 +99,9 @@ sudo ./scripts/00-deps.sh php            # 只装 PHP 的编译依赖
   跨构建回退时 `mongodb_sha256` 不要 pin 死。
 - `mongodb_root_user/pass`：安装后初始化的管理员账号，留空则跳过（裸跑无认证）。
 - `php` 与 `xqkeji` 必须配对（当前 8.5.12 + v1.1.6-php8.5），否则 .so 加载失败。
-  xqkeji 下载以 gitcode 归档为首选（fetch 统一带浏览器 UA，绕开 gitcode 对 curl 的
-  418 反爬），失败再回退 GitHub 国内代理 / GitHub 直连；也可填 `xqkeji_url` 指定镜像。
+  xqkeji 以 gitcode 归档为首选源，但 gitcode 的反爬按出口 IP 判，云主机即使带浏览
+  器 UA 也会 418；脚本会依次回退 GitHub 代理/直连与 `git clone`，仍失败可填
+  `xqkeji_url` 指定镜像，或手动把包放到 `/usr/local/src/lnmp/`。
 - `pie_extensions`：用 packagist 包名（`pecl/zip`、`mongodb/mongodb-extension`），
   gd 是核心 bundled 扩展 PIE 装不了，已由 PHP 编译期 `--enable-gd` 打开。
 - `ocserv_port` / `ocserv_network` / `ocserv_netmask` / `ocserv_dns`：VPN 监听端口、

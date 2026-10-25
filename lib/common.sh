@@ -137,9 +137,10 @@ mark_installed() {
 # 下载（断点续传 + 可选 sha256）。fetch <url> <dest> [sha256] [soft]
 # soft 非空时：下载/校验失败返回 1 而非 die（供多源回退调用方使用）
 #
-# UA 用浏览器串而非默认 curl/x.x：gitcode 的反爬会按"UA 像脚本 + IP 是云主机段"
-# 的组合直接回 418（同一条链接在浏览器里正常下载）。raw.gitcode.com 归档是
-# nginx_acme / xqkeji 的首选国内源，不能因为一个头就用不了，故全局带上。
+# UA 用浏览器串而非默认 curl/x.x：部分站点（含 gitcode）的 WAF 会看 UA。
+# 但实测 gitcode 归档的 418 主要按出口 IP 判——家宽用默认 curl UA 也 200，
+# 云主机段换了浏览器 UA 仍 418，所以这个头只能算"尽力而为"，真正兜底在
+# scripts/70-xqkeji.sh 的 git clone 回退。
 # 需要临时改回：FETCH_UA=curl/8.0 ./install.sh
 readonly FETCH_UA="${FETCH_UA:-Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36}"
 

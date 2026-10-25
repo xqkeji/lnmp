@@ -17,18 +17,29 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/lib/common.sh"
 source "$LIB_DIR/config.sh"
 source "$LIB_DIR/preflight.sh"
 
-# 下载源候选，依次尝试：
+# 准备 $SRC_DIR/php-xqkeji-<tag>/ 目录，里面有 xqkeji.so 即成功；失败 die。
+# 依次尝试：
 #   1) config.ini 的 xqkeji_url（自己的镜像整段 URL）
-#   2) gitcode 归档 —— 国内首选。它的反爬对"curl UA + 云主机 IP"的组合会回 418，
-#      lib/common.sh 的 fetch 已统一带浏览器 UA 解决，这里仍留后面的回退兜底
-#   3) GitHub 同名仓库的 tag 归档 + 内置国内代理（境外机器或 gitcode 真挂了才走到）
-# 三处的包顶层目录名不一致（gitcode 带 v、GitHub 不带），解压统一用
-# --strip-components=1，不受影响；也因此不能跨源 pin 同一个 sha256，故不校验。
+#   2) gitcode 归档 —— 国内首选。但它的反爬按出口 IP 判：家宽用默认 curl UA 也
+#      能 200，云主机段即便带浏览器 UA 仍回 418，所以这条只能排在前面尽力而为，
+#      必须留后面的兜底
+#   3) GitHub 同名仓库的 tag 归档 + 内置国内代理
+#   4) git clone（gitcode / GitHub）——走 smart HTTP，和归档不是同一条通道，
+#      被归档 WAF 拦掉的机器一般还能克隆
+# 各源的包顶层目录名不一致（gitcode 带 v、GitHub 不带），统一用
+# --strip-components=1 抹平；也因此不能跨源 pin 同一个 sha256，故不校验。
 fetch_xqkeji() {
   local tag="${CFG_xqkeji}"
   [[ -n $tag ]] || die "config.ini 缺少 xqkeji 版本号"
-  step "下载 xqkeji ${tag}"
+  step "获取 xqkeji ${tag}"
+
+  local dir="$SRC_DIR/php-xqkeji-${tag}"
   local tarball="$SRC_DIR/php-xqkeji-${tag}.tar.gz"
+  if [[ -f "$dir/xqkeji.so" ]]; then
+    info "  源码目录已就绪，跳过下载：$dir"
+    return 0
+  fi
+
   local -a urls=()
   [[ -n ${CFG_xqkeji_url:-} ]] && urls+=("${CFG_xqkeji_url}")
   urls+=("https://raw.gitcode.com/xqkeji/php-xqkeji/archive/refs/heads/${tag}.tar.gz")
@@ -42,17 +53,35 @@ fetch_xqkeji() {
 
   local u
   for u in "${urls[@]}"; do
-    info "  尝试源：$u"
+    info "  尝试归档源：$u"
     if fetch "$u" "$tarball" "" soft; then
-      return 0
+      rm -rf "$dir"
+      mkdir -p "$dir"
+      if tar -xzf "$tarball" -C "$dir" --strip-components=1 && [[ -f "$dir/xqkeji.so" ]]; then
+        return 0
+      fi
+      warn "  已下载但包里没有 xqkeji.so，尝试下一个"
+    else
+      warn "  该源不可用，尝试下一个"
     fi
-    warn "  该源不可用，尝试下一个"
   done
 
-  die "xqkeji ${tag} 所有下载源均失败。可手动下载后放到：$tarball
-    gitcode: https://raw.gitcode.com/xqkeji/php-xqkeji/archive/refs/heads/${tag}.tar.gz
-    GitHub : https://github.com/xqkeji/php-xqkeji/archive/refs/tags/${tag}.tar.gz
-  或在 config.ini 配 xqkeji_url=<你自己的镜像完整 URL> 后重跑 sudo ./install.sh"
+  local r
+  for r in https://gitcode.com/xqkeji/php-xqkeji.git https://github.com/xqkeji/php-xqkeji.git; do
+    info "  尝试 git clone：$r"
+    rm -rf "$dir"
+    if git clone --quiet --depth 1 --branch "$tag" "$r" "$dir" && [[ -f "$dir/xqkeji.so" ]]; then
+      return 0
+    fi
+    warn "  克隆不可用，尝试下一个"
+  done
+
+  die "xqkeji ${tag} 归档与 git 克隆全部失败。可选：
+  1) 手动下载后放到 $tarball（存在即跳过下载），再重跑 sudo ./install.sh
+     gitcode: https://raw.gitcode.com/xqkeji/php-xqkeji/archive/refs/heads/${tag}.tar.gz
+     GitHub : https://github.com/xqkeji/php-xqkeji/archive/refs/tags/${tag}.tar.gz
+     （浏览器里能正常下，下完传到服务器即可）
+  2) 在 config.ini 配 xqkeji_url=<你自己的镜像完整 URL>"
 }
 
 install_xqkeji() {
@@ -75,15 +104,9 @@ install_xqkeji() {
     return 0
   fi
 
-  local tarball="$SRC_DIR/php-xqkeji-${tag}.tar.gz"
-  [[ -s $tarball ]] || fetch_xqkeji
-
-  rm -rf "$SRC_DIR/php-xqkeji-${tag}"
-  mkdir -p "$SRC_DIR/php-xqkeji-${tag}"
-  tar -xzf "$tarball" -C "$SRC_DIR/php-xqkeji-${tag}" --strip-components=1
-
+  # fetch_xqkeji 要么交出带 xqkeji.so 的目录，要么 die
+  fetch_xqkeji
   local so="$SRC_DIR/php-xqkeji-${tag}/xqkeji.so"
-  [[ -f $so ]] || die "压缩包里没有 xqkeji.so，请检查 tag ${tag} 是否正确"
 
   # 扩展的 ABI 必须和当前 PHP 一致，否则 PHP 会拒绝加载。
   # 最可靠的判断是"直接让 PHP 试着加载"——比从二进制里 grep 一个 8 位数字准得多

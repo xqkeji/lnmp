@@ -49,11 +49,12 @@ preflight() {
 # require_ports <端口...>：被其它进程占用才中止；被本套装自身服务占用则放行
 # （重装 / 幂等场景下，nginx / php-fpm / mongod 本来就在跑，属正常）
 require_ports() {
-  local p
+  local p owner
   for p in "$@"; do
     if port_busy "$p"; then
       if port_owned_by_us "$p"; then
-        warn "  端口 $p 已被本套装服务（$(port_owner "$p" 2>/dev/null)）占用，属重装/幂等场景，跳过检查"
+        owner="$(port_owner "$p" 2>/dev/null)"
+        warn "  端口 $p 已被本套装服务（${owner:-进程名未知，机器上没装 ss}）占用，属重装/幂等场景，跳过检查"
       else
         die "端口 $p 已被其它进程占用，请先释放后再安装"
       fi

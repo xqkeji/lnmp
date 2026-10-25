@@ -3,7 +3,8 @@
 # scripts/10-nginx.sh - nginx 安装（apt 路线 / 源码路线双支持）
 #
 # nginx_install=src（默认）：源码编译 + 自行编译 ngx_http_acme_module 动态模块；
-#   acme 模块源码来自国内 Gitee 镜像（config.ini 的 nginx_acme_url），无需 GitHub。
+#   acme 模块源码默认走 config.ini 的 nginx_acme_url（gitcode 归档），失败自动
+#   回退 GitHub 代理/直连，最后兜底 git clone。
 # nginx_install=apt：nginx.org 官方 apt 包 + nginx-module-acme 预编译模块，
 #   自动尝试国内镜像（TUNA/nyist），无需 Rust、无需 GitHub。
 #
@@ -176,20 +177,34 @@ fetch_nginx() {
         "$tarball" "${CFG_nginx_sha256:-}"
 }
 
+# 目标：让 $SRC_DIR/nginx-acme-<ver>/ 里有一份可编译的源码（就绪与否看 .lnmp-ok 标记，
+# 见 lib/common.sh 的 src_ready；不能用"有没有 Cargo.toml"判，截断的包也有它）。
+# 候选源优先级：
+#   1) 用户显式完整 URL（nginx_acme_url，默认配的是 gitcode 镜像归档）
+#   2) 用户配置的镜像前缀
+#   3) 内置国内代理镜像（前缀式：拼到原始 GitHub 链接前；任一失效自动跳过）
+#   4) 替换式镜像（github.com -> kgithub.com）
+#   5) 直连 GitHub
+#   6) git clone（gitcode 镜像 -> 上游 GitHub）：1)-5) 全废时的兜底，
+#      因为 gitcode 归档的反爬按出口 IP 判（云主机段 418），而 smart HTTP
+#      是另一条通道，通常还能走
+# 各源归档的顶层目录名不一致（gitcode 带 v、release 包不带），统一用
+# --strip-components=1 抹平；也因此不能跨源 pin 同一个 sha256。
 fetch_nginx_acme() {
   local mver="${CFG_nginx_acme:-}"
   [[ -n $mver ]] || { info "  config.ini 未配置 nginx_acme，跳过模块下载"; return 0; }
-  step "下载 ngx_http_acme_module ${mver}"
+  step "获取 ngx_http_acme_module ${mver}"
+
+  local dir="$SRC_DIR/nginx-acme-${mver}"
   local tarball="$SRC_DIR/nginx-acme-${mver}.tar.gz"
+  if src_ready "$dir" "$mver"; then
+    info "  源码目录已就绪，跳过下载：$dir"
+    return 0
+  fi
+
   local rel="nginx/nginx-acme/releases/download/v${mver}/nginx-acme-${mver}.tar.gz"
   local -a urls=()
 
-  # 候选源优先级：
-  #   1) 用户显式完整 URL（如自己的 Gitee Release，国内最稳）
-  #   2) 用户配置的镜像前缀
-  #   3) 内置国内代理镜像（前缀式：拼到原始 GitHub 链接前；任一失效自动跳过）
-  #   4) 替换式镜像（github.com -> kgithub.com）
-  #   5) 直连 GitHub（兜底，国内常不稳定）
   [[ -n ${CFG_nginx_acme_url:-}    ]] && urls+=("${CFG_nginx_acme_url}")
   [[ -n ${CFG_nginx_acme_mirror:-} ]] && urls+=("${CFG_nginx_acme_mirror%/}/${rel}")
 
@@ -202,6 +217,7 @@ fetch_nginx_acme() {
     github.akams.cn
     hub.gitmirror.com
   )
+  local p
   for p in "${proxies[@]}"; do
     urls+=("https://${p}/https://github.com/${rel}")
   done
@@ -212,20 +228,36 @@ fetch_nginx_acme() {
 
   local u
   for u in "${urls[@]}"; do
-    info "  尝试源：$u"
+    info "  尝试归档源：$u"
     if fetch "$u" "$tarball" "${CFG_nginx_acme_sha256:-}" soft; then
-      return 0
+      rm -rf "$dir"
+      mkdir -p "$dir"
+      if tar -xzf "$tarball" -C "$dir" --strip-components=1 && [[ -f "$dir/Cargo.toml" ]]; then
+        mark_src_ready "$dir" "$mver"
+        return 0
+      fi
+      warn "  已下载但包里没有 Cargo.toml，尝试下一个"
+    else
+      warn "  该源不可用，尝试下一个"
     fi
-    warn "  该源不可用，尝试下一个"
   done
 
-  die "ngx_http_acme_module ${mver} 所有下载源均失败（含内置国内代理 ghproxy.net/ghfast.top 等）。
-  可手动下载并放到：$tarball
+  local r
+  for r in https://gitcode.com/xqkeji/nginx-acme.git https://github.com/nginx/nginx-acme.git; do
+    info "  尝试 git clone：$r"
+    if git_clone_at "v${mver}" "$dir" "$r" && [[ -f "$dir/Cargo.toml" ]]; then
+      mark_src_ready "$dir" "$mver"
+      return 0
+    fi
+    warn "  克隆不可用，尝试下一个"
+  done
+
+  die "ngx_http_acme_module ${mver} 所有下载源（含归档与 git clone）均失败。
+  可手动下载归档并放到：$tarball（放好后重跑即可自动解压使用）
     GitHub: https://github.com/nginx/nginx-acme/releases/download/v${mver}/nginx-acme-${mver}.tar.gz
   或在 config.ini 配置以下任一项（推荐用你自己的镜像整段 URL）：
     nginx_acme_url=https://raw.gitcode.com/xqkeji/nginx-acme/archive/refs/heads/v${mver}.tar.gz
-      注意：gitcode 归档的反爬按出口 IP 判，云主机上即使带浏览器 UA 也会 418，
-      这种情况改用 git clone 出来的目录、或自己 Release/对象存储的直链更稳
+      注意：gitcode 归档的反爬按出口 IP 判，云主机上即使带浏览器 UA 也会 418
     nginx_acme_mirror=https://ghproxy.net/https://github.com
   配置/放置后重新运行 sudo ./install.sh"
 }
@@ -367,14 +399,8 @@ build_nginx_acme() {
     rm -rf "$ns"; tar -xzf "$tb" -C "$SRC_DIR"
   fi
 
-  # 解压模块源码（release tarball 顶层目录名不固定，解压后探测实际目录）
-  # 注意：通配符只删“目录”（尾斜杠），绝不能误删 nginx-acme-${mver}.tar.gz 源包，
-  # 否则下一行 tar 打开的就是已被自己删掉的文件（FATAL: Cannot open）
-  rm -rf "$SRC_DIR"/nginx-acme-*/
-  tar -xzf "$SRC_DIR/nginx-acme-${mver}.tar.gz" -C "$SRC_DIR"
-  local as
-  as="$(find "$SRC_DIR" -maxdepth 1 -type d -name 'nginx-acme*' | head -1)"
-  [[ -n $as ]] || die "解压后未找到 nginx-acme 源码目录"
+  # 源码目录由 fetch_nginx_acme 备好（归档解压或 git clone 都落在这一路径）
+  local as="$SRC_DIR/nginx-acme-${mver}"
 
   (
     cd "$ns"

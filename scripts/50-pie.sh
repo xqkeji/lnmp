@@ -9,11 +9,37 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/lib/common.sh"
 source "$LIB_DIR/config.sh"
 source "$LIB_DIR/preflight.sh"
 
+# PIE 的发布物只在 GitHub release 上，而国内云主机直连 github.com 常是 connect
+# timeout（实测过：curl (28) Failed to connect to github.com port 443），所以按
+# 候选源回退：国内代理前缀 -> GitHub 直连。代理转发的是同一个 release 资产，
+# 但仍不 pin sha256（个别代理会改写响应），由 fetch 的 .part + 完整性判定兜底。
 fetch_pie() {
-  step "下载 PIE ${CFG_pie}"
+  local ver="${CFG_pie}"
+  [[ -n $ver ]] || die "config.ini 缺少 pie 版本号"
+  step "下载 PIE ${ver}"
   mkdir -p "$PREFIX_PIE"
-  fetch "https://github.com/php/pie/releases/download/${CFG_pie}/pie.phar" \
-        "$PREFIX_PIE/pie.phar" ""
+  local dest="$PREFIX_PIE/pie.phar"
+  local rel="php/pie/releases/download/${ver}/pie.phar"
+
+  local -a urls=()
+  local p
+  for p in ghproxy.net ghfast.top mirror.ghproxy.com hub.gitmirror.com; do
+    urls+=("https://${p}/https://github.com/${rel}")
+  done
+  urls+=("https://github.com/${rel}")
+
+  local u
+  for u in "${urls[@]}"; do
+    info "  尝试源：$u"
+    if fetch "$u" "$dest" "" soft; then
+      return 0
+    fi
+    warn "  该源不可用，尝试下一个"
+  done
+
+  die "PIE ${ver} 所有下载源均失败（含国内代理）。可手动下载后放到：$dest
+    https://github.com/${rel}
+  然后重新运行 sudo ./install.sh"
 }
 
 install_pie() {

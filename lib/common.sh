@@ -115,11 +115,23 @@ port_owner() {
 # 该端口是否被本套装自身服务占用（nginx / php-fpm / mongod）
 port_owned_by_us() {
   local owner; owner="$(port_owner "$1")"
-  [[ -z $owner ]] && return 1
-  case "$owner" in
-    nginx | php-fpm | php-fpm* | mongod | ocserv-main) return 0 ;;
-    *) return 1 ;;
-  esac
+  if [[ -n $owner ]]; then
+    case "$owner" in
+      nginx | php-fpm | php-fpm* | mongod | ocserv-main) return 0 ;;
+      *) return 1 ;;
+    esac
+  fi
+  # 认不出进程名时（最小化系统没有 ss，而 00-deps 装 iproute 的时机在 preflight
+  # 之后，首轮仍缺）退一步：本套四个服务里有在跑的就算自己人。
+  # 误判方向是"放行重装"，比把幂等重跑当成端口冲突直接 die 更符合实际情况。
+  local d c
+  for d in /proc/[0-9]*; do
+    c="$(cat "$d/comm" 2>/dev/null)" || continue
+    case "$c" in
+      nginx | php-fpm | mongod | ocserv-main) return 0 ;;
+    esac
+  done
+  return 1
 }
 
 # 已安装版本：没装过返回空串。installed_version <组件名>
@@ -220,6 +232,31 @@ fetch() {
   mv -f "$part" "$dest"
   rm -f "$part.url"
   info "  校验通过"
+}
+
+# git_clone_at <ref> <目标目录> <仓库 URL>
+# 归档下载全失败时的兜底通道（smart HTTP，与归档 WAF 不是同一条路）。
+# 单独包一层的理由：容器/最小化系统里可能没有 git，此时 `git` 返回 127，
+# 调用方会把它当成"这个源不可用"继续往下走，最后报出误导性的"克隆失败"。
+git_clone_at() {
+  local ref="$1" dir="$2" url="$3"
+  if ! command -v git >/dev/null 2>&1; then
+    warn "  系统里没有 git，无法用克隆兜底（dnf install git / apt install git）"
+    return 1
+  fi
+  rm -rf "$dir"
+  git clone --quiet --depth 1 --branch "$ref" "$url" "$dir"
+}
+
+# src_ready / mark_src_ready <源码目录> <版本>
+# 判断"这份源码已完整取到"能不能跳过重下。判据必须是自写标记，不能拿
+# "目录里有没有 Cargo.toml / xqkeji.so 这类关键文件"当数——归档半途断流时
+# tar 也会留下关键文件（只是截断的），到编译/加载阶段才炸，且报错毫无线索。
+src_ready() {
+  [[ -f "$1/.lnmp-ok" && $(cat "$1/.lnmp-ok") == "$2" ]]
+}
+mark_src_ready() {
+  printf '%s\n' "$2" > "$1/.lnmp-ok"
 }
 
 # Composer / PIE 的运行环境：独立 HOME，避免污染安装目录

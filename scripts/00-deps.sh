@@ -32,12 +32,15 @@ pkgs_for() {  # pkgs_for <组名>：按 OS_FAMILY 输出对应包名数组（eva
       # 必须有 unzip/7z 兜底（Debian 官方镜像预装了，最小化 Rocky/openEuler 没有）
       # xz：ocserv 官方源码包是 tar.xz，最小化镜像里没有 xz 工具
       # procps：lib/service.sh 的 pgrep 状态兜底依赖它（rocky:9 最小镜像不带）
+      # iproute：lib/common.sh 的 port_owner 靠 ss -p 认端口归属，最小镜像不带 ss
+      # 时 port_owned_by_us 永远返回"不是我家的"，第二次重跑 install.sh 会在
+      # preflight 直接 die「端口 27017 已被其它进程占用」
       if os_is_debian; then printf '%s\n' \
         build-essential autoconf automake libtool bison re2c pkg-config unzip xz-utils \
-        procps git curl wget ca-certificates tar gzip findutils
+        procps git curl wget ca-certificates tar gzip findutils iproute2
       else printf '%s\n' \
         gcc gcc-c++ make autoconf automake libtool bison unzip xz procps-ng \
-        git curl wget ca-certificates tar gzip findutils
+        git curl wget ca-certificates tar gzip findutils iproute
       fi ;;
     nginx_src)
       if os_is_debian; then printf '%s\n' libpcre2-dev zlib1g-dev libssl-dev
@@ -65,10 +68,14 @@ pkgs_for() {  # pkgs_for <组名>：按 OS_FAMILY 输出对应包名数组（eva
     ocserv)
       # ocserv 1.5+ 用 meson 构建；硬依赖只有 gnutls/nettle/libev，
       # talloc/llhttp/protobuf-c 有内嵌兜底，不必装开发包
+      # readline 开发包不是硬依赖，但必须装：1.6.0 的 occtl 在"没有原生 readline"
+      # 的分支里把 whitespace() 映射到 gnulib 的 c_isspace，而 meson 构建根本没带
+      # gnulib，链接直接 undefined reference to 'c_isspace'（libedit 也算这个分支，
+      # 只有 HAVE_ORIG_READLINE=1 才绕开）。装了它 occtl 还能用行编辑。
       if os_is_debian; then printf '%s\n' libgnutls28-dev nettle-dev libev-dev \
-        libseccomp-dev meson ninja-build pkg-config libpam0g-dev
+        libseccomp-dev meson ninja-build pkg-config libpam0g-dev libreadline-dev
       else printf '%s\n' gnutls-devel nettle-devel libev-devel \
-        libseccomp-devel meson ninja-build pam-devel; fi ;;
+        libseccomp-devel meson ninja-build pam-devel readline-devel; fi ;;
     *) die "未知依赖组：$group" ;;
   esac
 }

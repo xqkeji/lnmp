@@ -6,7 +6,7 @@
 #   组件            安装路径              端口     方式
 #   --------------  --------------------  -------  --------------------------
 #   nginx           /usr/local/nginx     80       源码编译（默认；config.ini 设 nginx_install=apt 走 nginx.org 包）
-#                                              acme 模块源码来自国内 Gitee 镜像（见 config.ini nginx_acme_url）
+#                                             acme 模块源码见 config.ini nginx_acme_url，失败自动回退
 #                                              apt 路线仅 Debian/Ubuntu；RHEL 家族固定源码编译
 #   MongoDB         /usr/local/mongodb   27017    官方预编译 tarball
 #   PHP (php-fpm)   /usr/local/php       9000     源码编译（含 gd）

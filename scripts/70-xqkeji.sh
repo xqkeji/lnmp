@@ -35,7 +35,8 @@ fetch_xqkeji() {
 
   local dir="$SRC_DIR/php-xqkeji-${tag}"
   local tarball="$SRC_DIR/php-xqkeji-${tag}.tar.gz"
-  if [[ -f "$dir/xqkeji.so" ]]; then
+  # 就绪判据是自写的 .lnmp-ok 标记，不是"目录里有 xqkeji.so"（见 src_ready）
+  if src_ready "$dir" "$tag"; then
     info "  源码目录已就绪，跳过下载：$dir"
     return 0
   fi
@@ -58,6 +59,7 @@ fetch_xqkeji() {
       rm -rf "$dir"
       mkdir -p "$dir"
       if tar -xzf "$tarball" -C "$dir" --strip-components=1 && [[ -f "$dir/xqkeji.so" ]]; then
+        mark_src_ready "$dir" "$tag"
         return 0
       fi
       warn "  已下载但包里没有 xqkeji.so，尝试下一个"
@@ -69,8 +71,8 @@ fetch_xqkeji() {
   local r
   for r in https://gitcode.com/xqkeji/php-xqkeji.git https://github.com/xqkeji/php-xqkeji.git; do
     info "  尝试 git clone：$r"
-    rm -rf "$dir"
-    if git clone --quiet --depth 1 --branch "$tag" "$r" "$dir" && [[ -f "$dir/xqkeji.so" ]]; then
+    if git_clone_at "$tag" "$dir" "$r" && [[ -f "$dir/xqkeji.so" ]]; then
+      mark_src_ready "$dir" "$tag"
       return 0
     fi
     warn "  克隆不可用，尝试下一个"
@@ -114,10 +116,11 @@ install_xqkeji() {
   # 若 ABI 不兼容，PHP 会输出 "Unable to initialize module" + "module API" 这类字样。
   local load_out api_php
   # 取当前 PHP 的 API 号（仅用于提示信息，取不到也不影响安装）。
-  # 优先 php-config --phpapi；取不到（某些 8.5 snapshot 的 php-config 对该选项返回非 0）
-  # 则回退到 php -i 里的 "PHP API =>" 行。两步都非致命。
+  # 优先 php-config --phpapi；但 8.5 的 php-config 根本没这个选项，它会把
+  # "Usage: ... [OPTION]" 整段用法打到 stdout 再退 1，所以必须确认取到的是纯数字，
+  # 否则回退到 php -i 里的 "PHP API =>" 行。两步都非致命。
   api_php="$("$PREFIX_PHP/bin/php-config" --phpapi 2>/dev/null)" || true
-  [[ -n $api_php ]] || api_php="$("$php_bin" -i 2>/dev/null | grep -i 'PHP API' | head -1 | grep -oE '20[0-9]{6}')"
+  [[ $api_php =~ ^[0-9]+$ ]] || api_php="$("$php_bin" -i 2>/dev/null | grep -i 'PHP API' | head -1 | grep -oE '20[0-9]{6}')"
   load_out="$("$php_bin" -n -d "extension=$so" -r 'echo "XQKEJI_OK";' 2>&1)" || true
   if [[ $load_out == *"Unable to initialize module"* || \
         ( $load_out == *"module API"* && $load_out == *"compiled with"* ) ]]; then
@@ -128,8 +131,14 @@ install_xqkeji() {
 $load_out"
   fi
   if [[ $load_out != *"XQKEJI_OK"* ]]; then
+    # 把文件指纹一起打出来：这段加载失败最常见的成因就是包体被截断
+    # （下载源半途断流），只看 PHP 那行报错分辨不出是"包坏了"还是"真不兼容"。
     die "xqkeji.so 加载异常，放弃安装：
-$load_out"
+${load_out:-  （PHP 没有任何输出，通常是 .so 本身有问题导致进程直接退出）}
+  文件：$so
+        大小 $(stat -c %s "$so" 2>/dev/null) 字节  sha256 $(sha256sum "$so" 2>/dev/null | awk '{print $1}')
+  如果大小和官方仓库里的 xqkeji.so 差很多，就是包被截断了，删掉源码目录重下：
+    sudo rm -rf \"$SRC_DIR/php-xqkeji-${tag}\" && sudo ./install.sh xqkeji"
   fi
   info "  ABI 兼容性校验通过（PHP API ${api_php:-未知} 成功加载 xqkeji.so）"
 

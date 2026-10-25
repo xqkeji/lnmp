@@ -84,6 +84,21 @@ EOF
   # --- ACME 公共配置（resolver / issuer / 共享内存区）----------------------
   if [[ -n ${CFG_nginx_acme:-} ]]; then
     local contact="${CFG_acme_contact:-admin@xqkeji.cn}"
+
+    # 系统 CA 束路径按家族不同：RHEL/openEuler 用 /etc/pki/tls/certs/ca-bundle.crt，
+    # Debian/Ubuntu 用 /etc/ssl/certs/ca-certificates.crt。这里必须给真实存在的路径：
+    # 模块对不存在的 ssl_trusted_certificate 文件不是报配置错误，而是直接段错误
+    # （实测 Rocky 上 nginx -t 退 139，一点提示都没有），找不到就整条不写。
+    local ca="" f
+    for f in /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/certs/ca-certificates.crt \
+             /etc/ssl/ca-bundle.pem /etc/pki/tls/cert.pem; do
+      if [[ -f $f ]]; then ca="$f"; break; fi
+    done
+    [[ -n $ca ]] || warn "  未找到系统 CA 束，acme 配置不写 ssl_trusted_certificate（由模块用内置默认）"
+    # 找不到就别写这行：写成 `ssl_trusted_certificate ;` 是语法错误
+    local ca_line=""
+    if [[ -n $ca ]]; then ca_line="    ssl_trusted_certificate ${ca};"; fi
+
     if [[ ! -f $etc/conf.d/acme.conf ]]; then
       cat > "$etc/conf.d/acme.conf" <<EOF
 # 由 lnmp 安装器生成（ngx_http_acme_module 公共配置）
@@ -96,13 +111,26 @@ acme_issuer letsencrypt {
     # 账户密钥 / 已签发证书 / 私钥都落这里，重启也不丢；属主须为 ${acme_user}
     state_path /var/cache/nginx/acme;
     accept_terms_of_service;
-    ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+${ca_line}
 }
 
 acme_shared_zone zone=ngx_acme_shared:1M;
 EOF
-      info "  已生成 conf.d/acme.conf（联系邮箱 ${contact}）"
+      info "  已生成 conf.d/acme.conf（联系邮箱 ${contact}，CA 束 ${ca:-未指定}）"
     else
+      # 早期版本按 Debian 路径写死了 ssl_trusted_certificate，在非 Debian 机器上
+      # 那个文件不存在，nginx 起不来（段错误）。已存在的配置不覆盖，但这一行必须修
+      local bad
+      bad="$(sed -n 's|^[[:space:]]*ssl_trusted_certificate[[:space:]]\{1,\}\([^;]*\);.*|\1|p' "$etc/conf.d/acme.conf" | head -1)"
+      if [[ -n $bad && ! -f $bad ]]; then
+        if [[ -n $ca ]]; then
+          sed -i "s|ssl_trusted_certificate[[:space:]]*${bad};|ssl_trusted_certificate ${ca};|" "$etc/conf.d/acme.conf"
+          warn "  acme.conf 的 ssl_trusted_certificate 指向不存在的 ${bad}（会让 nginx 段错误），已改为 ${ca}"
+        else
+          sed -i "/ssl_trusted_certificate ${bad};/d" "$etc/conf.d/acme.conf"
+          warn "  acme.conf 的 ssl_trusted_certificate 指向不存在的 ${bad}（会让 nginx 段错误），已删掉该行"
+        fi
+      fi
       info "  conf.d/acme.conf 已存在，保留"
     fi
 

@@ -18,15 +18,15 @@ source "$LIB_DIR/config.sh"
 source "$LIB_DIR/preflight.sh"
 
 # 准备 $SRC_DIR/php-xqkeji-<tag>/ 目录，里面有 xqkeji.so 即成功；失败 die。
-# 依次尝试：
+# 顺序按"gitcode 优先"排，关键是 gitcode 有两条互不相干的通道：
 #   1) config.ini 的 xqkeji_url（自己的镜像整段 URL）
-#   2) gitcode 归档 —— 国内首选。但它的反爬按出口 IP 判：家宽用默认 curl UA 也
-#      能 200，云主机段即便带浏览器 UA 仍回 418，所以这条只能排在前面尽力而为，
-#      必须留后面的兜底
-#   3) GitHub 同名仓库的 tag 归档 + 内置国内代理
-#   4) git clone（gitcode / GitHub）——走 smart HTTP，和归档不是同一条通道，
-#      被归档 WAF 拦掉的机器一般还能克隆
-# 各源的包顶层目录名不一致（gitcode 带 v、GitHub 不带），统一用
+#   2) gitcode 归档（raw.gitcode.com）——它的反爬按出口 IP 判：家宽用默认 curl UA
+#      也能 200，云主机段即便带浏览器 UA 仍回 418；"浏览器能下"是因为浏览器在他自己的
+#      电脑上而不是那台服务器上，所以这条只能尽力而为
+#   3) gitcode 的 git clone——smart HTTP，不经归档那条 WAF，实测归档 418 的机器上克隆
+#      照常成功，拿到的 xqkeji.so 与归档字节一致，所以紧跟归档，排在 GitHub 代理之前
+#   4) GitHub 归档 + 内置国内代理 -> GitHub 直连 -> GitHub 克隆（境外或前面全废才走到）
+# 各归档源的包顶层目录名不一致（gitcode 带 v、GitHub 不带），统一用
 # --strip-components=1 抹平；也因此不能跨源 pin 同一个 sha256，故不校验。
 fetch_xqkeji() {
   local tag="${CFG_xqkeji}"
@@ -41,41 +41,48 @@ fetch_xqkeji() {
     return 0
   fi
 
-  local -a urls=()
-  [[ -n ${CFG_xqkeji_url:-} ]] && urls+=("${CFG_xqkeji_url}")
-  urls+=("https://raw.gitcode.com/xqkeji/php-xqkeji/archive/refs/heads/${tag}.tar.gz")
-
+  # 候选源统一成 "方式|地址"，tar=下载归档后解压，git=直接克隆
   local rel="xqkeji/php-xqkeji/archive/refs/tags/${tag}.tar.gz"
+  local -a candidates=()
+  if [[ -n ${CFG_xqkeji_url:-} ]]; then
+    candidates+=("tar|${CFG_xqkeji_url}")
+  fi
+  candidates+=("tar|https://raw.gitcode.com/xqkeji/php-xqkeji/archive/refs/heads/${tag}.tar.gz")
+  candidates+=("git|https://gitcode.com/xqkeji/php-xqkeji.git")
   local p
   for p in ghproxy.net ghfast.top mirror.ghproxy.com hub.gitmirror.com; do
-    urls+=("https://${p}/https://github.com/${rel}")
+    candidates+=("tar|https://${p}/https://github.com/${rel}")
   done
-  urls+=("https://github.com/${rel}")
+  candidates+=("tar|https://github.com/${rel}")
+  candidates+=("git|https://github.com/xqkeji/php-xqkeji.git")
 
-  local u
-  for u in "${urls[@]}"; do
-    info "  尝试归档源：$u"
-    if fetch "$u" "$tarball" "" soft; then
-      rm -rf "$dir"
-      mkdir -p "$dir"
-      if tar -xzf "$tarball" -C "$dir" --strip-components=1 && [[ -f "$dir/xqkeji.so" ]]; then
-        mark_src_ready "$dir" "$tag"
-        return 0
-      fi
-      warn "  已下载但包里没有 xqkeji.so，尝试下一个"
-    else
-      warn "  该源不可用，尝试下一个"
-    fi
-  done
-
-  local r
-  for r in https://gitcode.com/xqkeji/php-xqkeji.git https://github.com/xqkeji/php-xqkeji.git; do
-    info "  尝试 git clone：$r"
-    if git_clone_at "$tag" "$dir" "$r" && [[ -f "$dir/xqkeji.so" ]]; then
-      mark_src_ready "$dir" "$tag"
-      return 0
-    fi
-    warn "  克隆不可用，尝试下一个"
+  local c kind spec
+  for c in "${candidates[@]}"; do
+    kind="${c%%|*}"; spec="${c#*|}"
+    case "$kind" in
+      tar)
+        info "  尝试归档源：$spec"
+        if ! fetch "$spec" "$tarball" "" soft; then
+          warn "  该源不可用，尝试下一个"
+          continue
+        fi
+        rm -rf "$dir"
+        mkdir -p "$dir"
+        if ! tar -xzf "$tarball" -C "$dir" --strip-components=1 || [[ ! -f "$dir/xqkeji.so" ]]; then
+          warn "  已下载但包里没有 xqkeji.so，尝试下一个"
+          continue
+        fi
+        ;;
+      git)
+        info "  尝试 git clone：$spec"
+        if ! git_clone_at "$tag" "$dir" "$spec" || [[ ! -f "$dir/xqkeji.so" ]]; then
+          warn "  克隆不可用，尝试下一个"
+          continue
+        fi
+        ;;
+    esac
+    mark_src_ready "$dir" "$tag"
+    return 0
   done
 
   die "xqkeji ${tag} 归档与 git 克隆全部失败。可选：

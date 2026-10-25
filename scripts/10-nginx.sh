@@ -179,16 +179,15 @@ fetch_nginx() {
 
 # 目标：让 $SRC_DIR/nginx-acme-<ver>/ 里有一份可编译的源码（就绪与否看 .lnmp-ok 标记，
 # 见 lib/common.sh 的 src_ready；不能用"有没有 Cargo.toml"判，截断的包也有它）。
-# 候选源优先级：
-#   1) 用户显式完整 URL（nginx_acme_url，默认配的是 gitcode 镜像归档）
+# 候选顺序（tar=下载归档后解压，git=直接克隆），gitcode 有两条互不相干的通道：
+#   1) 用户显式完整 URL（nginx_acme_url，默认就是 gitcode 镜像归档）
 #   2) 用户配置的镜像前缀
-#   3) 内置国内代理镜像（前缀式：拼到原始 GitHub 链接前；任一失效自动跳过）
-#   4) 替换式镜像（github.com -> kgithub.com）
-#   5) 直连 GitHub
-#   6) git clone（gitcode 镜像 -> 上游 GitHub）：1)-5) 全废时的兜底，
-#      因为 gitcode 归档的反爬按出口 IP 判（云主机段 418），而 smart HTTP
-#      是另一条通道，通常还能走
-# 各源归档的顶层目录名不一致（gitcode 带 v、release 包不带），统一用
+#   3) gitcode 的 git clone——归档的反爬按出口 IP 判（云主机段必 418，带浏览器 UA
+#      也没用，"浏览器能下"是因为浏览器不在那台机器上），而 smart HTTP 是另一条路，
+#      实测归档 418 的机器克隆照常成功，所以排在所有 GitHub 代理之前
+#   4) 内置国内代理镜像（前缀式，任一失效自动跳过）+ 替换式镜像 kgithub
+#   5) 直连 GitHub 归档、GitHub 上游克隆
+# 各归档源顶层目录名不一致（gitcode 带 v、release 包不带），统一用
 # --strip-components=1 抹平；也因此不能跨源 pin 同一个 sha256。
 fetch_nginx_acme() {
   local mver="${CFG_nginx_acme:-}"
@@ -203,10 +202,14 @@ fetch_nginx_acme() {
   fi
 
   local rel="nginx/nginx-acme/releases/download/v${mver}/nginx-acme-${mver}.tar.gz"
-  local -a urls=()
-
-  [[ -n ${CFG_nginx_acme_url:-}    ]] && urls+=("${CFG_nginx_acme_url}")
-  [[ -n ${CFG_nginx_acme_mirror:-} ]] && urls+=("${CFG_nginx_acme_mirror%/}/${rel}")
+  local -a candidates=()
+  if [[ -n ${CFG_nginx_acme_url:-} ]]; then
+    candidates+=("tar|${CFG_nginx_acme_url}")
+  fi
+  if [[ -n ${CFG_nginx_acme_mirror:-} ]]; then
+    candidates+=("tar|${CFG_nginx_acme_mirror%/}/${rel}")
+  fi
+  candidates+=("git|https://gitcode.com/xqkeji/nginx-acme.git")
 
   # 国内代理镜像（公共服务，可能偶发失效；按经验靠前排更稳的两个）
   local -a proxies=(
@@ -219,37 +222,40 @@ fetch_nginx_acme() {
   )
   local p
   for p in "${proxies[@]}"; do
-    urls+=("https://${p}/https://github.com/${rel}")
+    candidates+=("tar|https://${p}/https://github.com/${rel}")
   done
-  # 域名替换式镜像
-  urls+=("https://kgithub.com/${rel}")
-  # 直连 GitHub（兜底）
-  urls+=("https://github.com/${rel}")
+  # 域名替换式镜像 + 直连 GitHub + 上游克隆
+  candidates+=("tar|https://kgithub.com/${rel}")
+  candidates+=("tar|https://github.com/${rel}")
+  candidates+=("git|https://github.com/nginx/nginx-acme.git")
 
-  local u
-  for u in "${urls[@]}"; do
-    info "  尝试归档源：$u"
-    if fetch "$u" "$tarball" "${CFG_nginx_acme_sha256:-}" soft; then
-      rm -rf "$dir"
-      mkdir -p "$dir"
-      if tar -xzf "$tarball" -C "$dir" --strip-components=1 && [[ -f "$dir/Cargo.toml" ]]; then
-        mark_src_ready "$dir" "$mver"
-        return 0
-      fi
-      warn "  已下载但包里没有 Cargo.toml，尝试下一个"
-    else
-      warn "  该源不可用，尝试下一个"
-    fi
-  done
-
-  local r
-  for r in https://gitcode.com/xqkeji/nginx-acme.git https://github.com/nginx/nginx-acme.git; do
-    info "  尝试 git clone：$r"
-    if git_clone_at "v${mver}" "$dir" "$r" && [[ -f "$dir/Cargo.toml" ]]; then
-      mark_src_ready "$dir" "$mver"
-      return 0
-    fi
-    warn "  克隆不可用，尝试下一个"
+  local c kind spec
+  for c in "${candidates[@]}"; do
+    kind="${c%%|*}"; spec="${c#*|}"
+    case "$kind" in
+      tar)
+        info "  尝试归档源：$spec"
+        if ! fetch "$spec" "$tarball" "${CFG_nginx_acme_sha256:-}" soft; then
+          warn "  该源不可用，尝试下一个"
+          continue
+        fi
+        rm -rf "$dir"
+        mkdir -p "$dir"
+        if ! tar -xzf "$tarball" -C "$dir" --strip-components=1 || [[ ! -f "$dir/Cargo.toml" ]]; then
+          warn "  已下载但包里没有 Cargo.toml，尝试下一个"
+          continue
+        fi
+        ;;
+      git)
+        info "  尝试 git clone：$spec"
+        if ! git_clone_at "v${mver}" "$dir" "$spec" || [[ ! -f "$dir/Cargo.toml" ]]; then
+          warn "  克隆不可用，尝试下一个"
+          continue
+        fi
+        ;;
+    esac
+    mark_src_ready "$dir" "$mver"
+    return 0
   done
 
   die "ngx_http_acme_module ${mver} 所有下载源（含归档与 git clone）均失败。
@@ -258,6 +264,7 @@ fetch_nginx_acme() {
   或在 config.ini 配置以下任一项（推荐用你自己的镜像整段 URL）：
     nginx_acme_url=https://raw.gitcode.com/xqkeji/nginx-acme/archive/refs/heads/v${mver}.tar.gz
       注意：gitcode 归档的反爬按出口 IP 判，云主机上即使带浏览器 UA 也会 418
+      （这种情况下脚本会自动改用 gitcode 的 git clone，同版本号字节一致）
     nginx_acme_mirror=https://ghproxy.net/https://github.com
   配置/放置后重新运行 sudo ./install.sh"
 }

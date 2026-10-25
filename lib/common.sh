@@ -168,8 +168,9 @@ archive_ok() {
 #
 # UA 用浏览器串而非默认 curl/x.x：部分站点（含 gitcode）的 WAF 会看 UA。
 # 但实测 gitcode 归档的 418 主要按出口 IP 判——家宽用默认 curl UA 也 200，
-# 云主机段换了浏览器 UA 仍 418，所以这个头只能算"尽力而为"，真正兜底在
-# scripts/70-xqkeji.sh 的 git clone 回退。
+# 云主机段换了浏览器 UA 仍 418，所以这个头只能算"尽力而为"。真正绕开它的是一次
+# gitcode 的 git clone（smart HTTP，不走归档那条 WAF），见 scripts/70-xqkeji.sh
+# 与 scripts/10-nginx.sh 的候选源顺序。
 # 需要临时改回：FETCH_UA=curl/8.0 ./install.sh
 readonly FETCH_UA="${FETCH_UA:-Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36}"
 

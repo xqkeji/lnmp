@@ -59,7 +59,10 @@ sudo ./scripts/78-firewall.sh undo   # 应急还原：恢复 SSH 对外访问
 ```
 
 安装状态记录在 `/usr/local/lnmp/state/`，完整日志在 `/var/log/lnmp-install.log`，
-源码包缓存在 `/usr/local/src/lnmp/`。
+源码包缓存在 `/usr/local/src/lnmp/`。缓存的包会先过一遍校验才复用：pin 了
+sha256 按 sha256，没 pin 则按归档完整性（gzip/xz 全量解一遍），所以断流留下的
+残包会被丢弃重下，不会拖到 tar 解压时才失败；下载先进同目录的 `<包名>.part`，
+同一个 URL 中断后续传，换源时该半成品作废。
 
 ## 服务管理（systemd 与容器通用）
 

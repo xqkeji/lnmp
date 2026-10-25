@@ -183,7 +183,7 @@ install_mongosh() {
   fi
 
   local tarball="$SRC_DIR/mongosh-${ver}-linux-x64.tgz"
-  [[ -s $tarball ]] || fetch_mongosh
+  fetch_mongosh
 
   rm -rf "$SRC_DIR/mongosh-${ver}-linux-x64"
   tar -xzf "$tarball" -C "$SRC_DIR"

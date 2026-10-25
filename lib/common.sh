@@ -134,8 +134,25 @@ mark_installed() {
   printf '%s\n' "$2" > "$STATE_DIR/$1.version"
 }
 
-# 下载（断点续传 + 可选 sha256）。fetch <url> <dest> [sha256] [soft]
+# 归档完整性检查：sha256 没 pin 时（多源回退各源字节不同，故意不 pin），
+# 半途断流的残包在下一个源会被"已存在且校验通过"当成有效包，直到 tar 才炸。
+# 这里按扩展名做一次解压级校验——只信"能完整解开"的包。非归档扩展直接放过。
+archive_ok() {
+  local f="$1"
+  [[ -s $f ]] || return 1
+  case "$f" in
+    *.tar.gz|*.tgz)   gzip -t "$f" ;;
+    *.tar.xz|*.txz)   xz -t "$f" ;;
+    *.tar.bz2|*.tbz2) bzip2 -t "$f" ;;
+    *)                return 0 ;;
+  esac
+}
+
+# 下载（断点续传 + 可选 sha256 + 归档完整性）。fetch <url> <dest> [sha256] [soft]
 # soft 非空时：下载/校验失败返回 1 而非 die（供多源回退调用方使用）
+#
+# 只在全部校验通过后才把文件落成 $dest：下载先进 $dest.part，成功后 mv 过去。
+# 因此 $dest 一旦存在就一定是完整可用的包，$part 才是可以继续续传的半成品。
 #
 # UA 用浏览器串而非默认 curl/x.x：部分站点（含 gitcode）的 WAF 会看 UA。
 # 但实测 gitcode 归档的 418 主要按出口 IP 判——家宽用默认 curl UA 也 200，
@@ -147,39 +164,61 @@ readonly FETCH_UA="${FETCH_UA:-Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.3
 fetch() {
   local url="$1" dest="$2" want="${3:-}" soft="${4:-}"
   mkdir -p "$(dirname "$dest")"
+  local part="$dest.part"
 
-  if [[ -s $dest ]] && verify_file "$dest" "$want"; then
+  # $dest 已存在但未通过校验 = 上次留下的残包/错误页，删掉重来，绝不复用
+  if [[ -s $dest ]] && verify_file "$dest" "$want" && archive_ok "$dest"; then
     info "  已存在且校验通过，跳过下载：$(basename "$dest")"
     return 0
+  fi
+  if [[ -s $dest ]]; then
+    warn "  已有包未通过校验（残包或错误页），丢弃后重下：$(basename "$dest")"
+    rm -f "$dest"
+  fi
+
+  # 续传只对同一个 URL 有意义：多源回退时 $part 可能来自别的镜像，
+  # 拼上去必然得到"能下载但解不开"的混合包，所以用 $part.url 记住来源
+  if [[ -e $part ]] && [[ "$(cat "$part.url" 2>/dev/null)" != "$url" ]]; then
+    warn "  丢弃来自其它源的半成品：$(basename "$part")"
+    rm -f "$part"
   fi
 
   info "  下载 $(basename "$dest")"
   info "    <- $url"
-  local i
+  printf '%s' "$url" > "$part.url"
+  local i ok=0
   for ((i = 1; i <= 3; i++)); do
     if curl -fL --retry 3 --retry-delay 3 --connect-timeout 20 \
-         -A "$FETCH_UA" -H 'Accept: */*' -C - -o "$dest" "$url"; then
-      break
+         -A "$FETCH_UA" -H 'Accept: */*' -C - -o "$part" "$url"; then
+      ok=1; break
     fi
     warn "  第 $i 次下载失败"
-    if ((i == 3)); then
-      [[ $soft == soft ]] && return 1
-      die "下载失败（已重试 3 次）：$url"
-    fi
   done
 
+  # 失败清理：换源或重跑都从干净状态开始（残包留在盘上只会误导下一次）
+  if (( ! ok )); then
+    rm -f "$part" "$part.url"
+    [[ $soft == soft ]] && return 1
+    die "下载失败（已重试 3 次）：$url"
+  fi
+
   # 防代理/服务端返回 HTML 错误页被当成成功（gzip/tar 首字节必为二进制，不可能以 '<' 开头）
-  if [[ "$(head -c 1 "$dest" 2>/dev/null)" == '<' ]]; then
+  if [[ "$(head -c 1 "$part" 2>/dev/null)" == '<' ]]; then
     warn "  下载到的不是压缩包（疑似代理/服务端错误页），视为失败"
-    rm -f "$dest"
+    rm -f "$part" "$part.url"
     [[ $soft == soft ]] && return 1
     die "下载内容异常（非压缩包）：$url"
   fi
 
-  if ! verify_file "$dest" "$want"; then
+  if ! verify_file "$part" "$want" || ! archive_ok "$part"; then
+    warn "  包体不完整或校验不符，丢弃：$(basename "$part")"
+    rm -f "$part" "$part.url"
     [[ $soft == soft ]] && return 1
-    die "sha256 校验不通过：$(basename "$dest")"
+    die "下载内容不可用（sha256 或归档完整性不通过）：$(basename "$dest")"
   fi
+
+  mv -f "$part" "$dest"
+  rm -f "$part.url"
   info "  校验通过"
 }
 

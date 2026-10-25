@@ -44,7 +44,7 @@ install_ocserv() {
   fi
 
   local tarball="$SRC_DIR/ocserv-${CFG_ocserv}.tar.xz"
-  [[ -s $tarball ]] || fetch_ocserv
+  fetch_ocserv
   need_cmd xz
 
   rm -rf "$SRC_DIR/ocserv-${CFG_ocserv}"

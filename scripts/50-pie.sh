@@ -25,7 +25,7 @@ install_pie() {
     return 0
   fi
 
-  [[ -s $phar ]] || fetch_pie
+  fetch_pie
 
   chmod +x "$phar"
   ln -sf "$phar" /usr/local/bin/pie

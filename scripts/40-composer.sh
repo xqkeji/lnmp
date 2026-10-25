@@ -25,7 +25,7 @@ install_composer() {
     return 0
   fi
 
-  [[ -s $phar ]] || fetch_composer
+  fetch_composer
 
   chmod +x "$phar"
   ln -sf "$phar" /usr/local/bin/composer

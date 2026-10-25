@@ -30,7 +30,7 @@ install_php() {
   fi
 
   local tarball="$SRC_DIR/php-${CFG_php}.tar.gz"
-  [[ -s $tarball ]] || fetch_php
+  fetch_php
 
   rm -rf "$SRC_DIR/php-${CFG_php}"
   tar -xzf "$tarball" -C "$SRC_DIR"

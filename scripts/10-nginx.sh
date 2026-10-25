@@ -323,7 +323,7 @@ install_nginx() {
   fi
 
   local tarball="$SRC_DIR/nginx-${CFG_nginx}.tar.gz"
-  [[ -s $tarball ]] || fetch_nginx
+  fetch_nginx
 
   rm -rf "$SRC_DIR/nginx-${CFG_nginx}"
   tar -xzf "$tarball" -C "$SRC_DIR"
@@ -363,7 +363,7 @@ build_nginx_acme() {
   local ns="$SRC_DIR/nginx-${CFG_nginx}"
   if [[ ! -d $ns ]]; then
     local tb="$SRC_DIR/nginx-${CFG_nginx}.tar.gz"
-    [[ -s $tb ]] || fetch_nginx
+    fetch_nginx
     rm -rf "$ns"; tar -xzf "$tb" -C "$SRC_DIR"
   fi
 

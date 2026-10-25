@@ -131,13 +131,24 @@ pkg_install_any() {
     fi
   done
   pkg_update_once
+  local out reasons=""
   for p in "$@"; do
-    if __pkg_run_install "$p" >/dev/null 2>&1; then
+    if out="$(__pkg_run_install "$p" 2>&1)"; then
       info "  ${desc}：已安装 ${p}"
       return 0
     fi
+    # 只留报错末尾：dnf/apt 的真话都在最后几行（No match for argument /
+    # Cannot download metadata），前面那堆下载进度条只会把重点淹掉
+    reasons+="${p} <- $(printf '%s' "$out" | tr '\n\r' '  ' | tail -c 160)"$'\n'
   done
-  warn "  ${desc}：源中都不可用（候选：$*），跳过"
+  # 原话只说"源中都不可用"会误导：真实原因可能是源里没这个包，也可能是源不可达、
+  # 元数据过期。这几种的处置完全不同，必须把包管理器的报错带出来。
+  warn "  ${desc}：候选包全部安装失败（$*），跳过"
+  local line
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    warn "    ${line}"
+  done <<<"$reasons"
   return 0
 }
 

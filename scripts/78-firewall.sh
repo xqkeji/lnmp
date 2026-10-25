@@ -3,7 +3,9 @@
 # scripts/78-firewall.sh - 主机防火墙收紧：对外只放行 80 / 443 / ocserv 端口
 #
 # step_firewall   自动识别 firewalld（RHEL 系常态）或 iptables（Debian 系），
-#                 应用下面的策略并尽力持久化（重启后仍生效）：
+#                 应用下面的策略并尽力持久化（重启后仍生效）。
+#                 两者都拿不到时（源里没 iptables 的精简系统）只告警并打印手工
+#                 补规则的命令，不中止安装——中断会把后面的 systemd/启动/自检一起带走。
 #   - 放行：80/tcp、443/tcp（nginx/acme）、ocserv 端口 tcp+udp（config.ini ocserv_port）
 #   - 22/tcp：拒绝一切外部来源，只放行本机回环与 ocserv 地址段
 #             （如 10.10.10.0/24）——外部必须先连上 VPN 才能 SSH。
@@ -102,7 +104,19 @@ lock_iptables() {
   local port="$1" vpn_blk="$2" ssh_locked="$3"
   # 最小化镜像（debian:12 等）没有 iptables 命令，先软装再检查
   command -v iptables >/dev/null 2>&1 || pkg_install_any "iptables" iptables
-  need_cmd iptables
+  # 装不上就到此为止，不能 die：这里是安装流程的后段，中断会让 systemd 单元、
+  # 服务启动与 99-verify 自检全部不跑，机器停在"半装"状态比没收紧更糟。
+  # 而且 mongod/php-fpm 都只 bind 127.0.0.1，跳过收紧只是维持原样，不是新开的洞。
+  if ! command -v iptables >/dev/null 2>&1; then
+    warn "  没有 iptables 命令，本次未收紧防火墙（其余安装步骤照常继续）"
+    warn "  手工补上（任选其一，然后重跑 sudo ${ROOT_DIR}/scripts/78-firewall.sh）："
+    warn "    1) ${PKG:-dnf} install -y iptables   # 上面已打印装不上的真实原因"
+    command -v firewall-cmd >/dev/null 2>&1 && \
+      warn "    2) 本机有 firewall-cmd 但 firewalld 没在跑：systemctl start firewalld"
+    command -v nft >/dev/null 2>&1 && \
+      warn "    3) 本机只有 nftables(nft)：本脚本暂不用它下规则，需手工放行 80/443/${port}"
+    return 1
+  fi
   iptables -S >/dev/null 2>&1 \
     || { warn "  当前环境无权操作 iptables（容器缺 NET_ADMIN？），本次未收紧"; return 1; }
 

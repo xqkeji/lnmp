@@ -52,6 +52,9 @@ ocserv 就绪后 `scripts/78-firewall.sh` 自动收紧主机防火墙（firewall
   工具必须先连上 ocserv 才能 SSH 服务器。已建立的 SSH 会话不受影响。
 - 安全闸：ocserv 未安装或未运行时，本次不收紧 22（防止远程失联），其余策略照旧。
 - VPN 客户端出网的 MASQUERADE 自动配置（firewalld 或 iptables nat）。
+- 两个后端都拿不到时（精简系统里 iptables 装不上）**只告警不中止**：会打印装包
+  命令和该手工放行的端口，让安装把 systemd 单元、启动与自检跑完；自检报告此时会
+  明确写"防火墙 未收紧"，不会假装一切正常。
 
 ```bash
 sudo ./scripts/78-firewall.sh        # 手动（重新）应用收紧策略

@@ -45,7 +45,13 @@ step_verify() {
   elif command -v iptables >/dev/null 2>&1 && iptables -S LNMP-IN >/dev/null 2>&1; then
     fw="iptables（LNMP-IN 链）：对外仅 80/443/${CFG_ocserv_port:-4443}，其余端口（含 27017）拒绝"
   fi
-  if [[ -n $fw ]]; then info "  防火墙  $fw"; fi
+  # 三条路径都没命中就是"根本没收紧"，必须显式说出来：78-firewall.sh 现在遇到
+  # 缺 iptables 只告警不中止，若这里保持沉默，自检报告看着像一切正常。
+  if [[ -n $fw ]]; then
+    info "  防火墙  $fw"
+  else
+    warn "  防火墙  未收紧：既没有运行中的 firewalld，也没有 iptables 的 LNMP-IN 链"
+  fi
 
   # mongod 是否真的在运行（上面的 --version 只是看版本号，不代表进程在跑）
   if svc_status mongodb; then

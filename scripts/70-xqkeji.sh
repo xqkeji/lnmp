@@ -17,10 +17,42 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/lib/common.sh"
 source "$LIB_DIR/config.sh"
 source "$LIB_DIR/preflight.sh"
 
+# 下载源候选，依次尝试：
+#   1) config.ini 的 xqkeji_url（自己的镜像整段 URL）
+#   2) gitcode 归档 —— 国内首选。它的反爬对"curl UA + 云主机 IP"的组合会回 418，
+#      lib/common.sh 的 fetch 已统一带浏览器 UA 解决，这里仍留后面的回退兜底
+#   3) GitHub 同名仓库的 tag 归档 + 内置国内代理（境外机器或 gitcode 真挂了才走到）
+# 三处的包顶层目录名不一致（gitcode 带 v、GitHub 不带），解压统一用
+# --strip-components=1，不受影响；也因此不能跨源 pin 同一个 sha256，故不校验。
 fetch_xqkeji() {
-  step "下载 xqkeji ${CFG_xqkeji}"
-  fetch "https://raw.gitcode.com/xqkeji/php-xqkeji/archive/refs/heads/${CFG_xqkeji}.tar.gz" \
-        "$SRC_DIR/php-xqkeji-${CFG_xqkeji}.tar.gz" ""
+  local tag="${CFG_xqkeji}"
+  [[ -n $tag ]] || die "config.ini 缺少 xqkeji 版本号"
+  step "下载 xqkeji ${tag}"
+  local tarball="$SRC_DIR/php-xqkeji-${tag}.tar.gz"
+  local -a urls=()
+  [[ -n ${CFG_xqkeji_url:-} ]] && urls+=("${CFG_xqkeji_url}")
+  urls+=("https://raw.gitcode.com/xqkeji/php-xqkeji/archive/refs/heads/${tag}.tar.gz")
+
+  local rel="xqkeji/php-xqkeji/archive/refs/tags/${tag}.tar.gz"
+  local p
+  for p in ghproxy.net ghfast.top mirror.ghproxy.com hub.gitmirror.com; do
+    urls+=("https://${p}/https://github.com/${rel}")
+  done
+  urls+=("https://github.com/${rel}")
+
+  local u
+  for u in "${urls[@]}"; do
+    info "  尝试源：$u"
+    if fetch "$u" "$tarball" "" soft; then
+      return 0
+    fi
+    warn "  该源不可用，尝试下一个"
+  done
+
+  die "xqkeji ${tag} 所有下载源均失败。可手动下载后放到：$tarball
+    gitcode: https://raw.gitcode.com/xqkeji/php-xqkeji/archive/refs/heads/${tag}.tar.gz
+    GitHub : https://github.com/xqkeji/php-xqkeji/archive/refs/tags/${tag}.tar.gz
+  或在 config.ini 配 xqkeji_url=<你自己的镜像完整 URL> 后重跑 sudo ./install.sh"
 }
 
 install_xqkeji() {

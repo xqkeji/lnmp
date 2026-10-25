@@ -136,6 +136,13 @@ mark_installed() {
 
 # 下载（断点续传 + 可选 sha256）。fetch <url> <dest> [sha256] [soft]
 # soft 非空时：下载/校验失败返回 1 而非 die（供多源回退调用方使用）
+#
+# UA 用浏览器串而非默认 curl/x.x：gitcode 的反爬会按"UA 像脚本 + IP 是云主机段"
+# 的组合直接回 418（同一条链接在浏览器里正常下载）。raw.gitcode.com 归档是
+# nginx_acme / xqkeji 的首选国内源，不能因为一个头就用不了，故全局带上。
+# 需要临时改回：FETCH_UA=curl/8.0 ./install.sh
+readonly FETCH_UA="${FETCH_UA:-Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36}"
+
 fetch() {
   local url="$1" dest="$2" want="${3:-}" soft="${4:-}"
   mkdir -p "$(dirname "$dest")"
@@ -149,7 +156,8 @@ fetch() {
   info "    <- $url"
   local i
   for ((i = 1; i <= 3; i++)); do
-    if curl -fL --retry 3 --retry-delay 3 --connect-timeout 20 -C - -o "$dest" "$url"; then
+    if curl -fL --retry 3 --retry-delay 3 --connect-timeout 20 \
+         -A "$FETCH_UA" -H 'Accept: */*' -C - -o "$dest" "$url"; then
       break
     fi
     warn "  第 $i 次下载失败"

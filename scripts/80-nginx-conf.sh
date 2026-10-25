@@ -64,6 +64,15 @@ EOF
     info "  apt 路线：nginx.conf 由 nginx.org 包提供，保留"
   fi
 
+  # --- 保证 http 块 include conf.d/*.conf ----------------------------------
+  # src 路线的 nginx.conf 若是 make install 生成的官方原版（http 块里没有
+  # conf.d include），直接放 conf.d 文件不会生效，须在 http { 后补一行；
+  # apt 包的 nginx.conf 自带该行，grep 守门不会重复注入
+  if ! grep -qE '^[[:space:]]*include[[:space:]]+.*conf\.d' "$etc/nginx.conf"; then
+    sed -i "0,/^[[:space:]]*http {/s|^[[:space:]]*http {|http {\\n    include $etc/conf.d/*.conf;|" "$etc/nginx.conf"
+    info "  已在 http 块开头注入 include conf.d/*.conf"
+  fi
+
   # --- 注入 load_module（ngx_http_acme_module 必须在 events 之前）-----------
   if [[ -n ${CFG_nginx_acme:-} ]]; then
     if ! grep -q "ngx_http_acme_module" "$etc/nginx.conf"; then

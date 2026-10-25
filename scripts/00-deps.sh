@@ -102,6 +102,9 @@ deps_common() {
 }
 
 deps_nginx() {
+  # 单独选装（bare 机器只跑 ./install.sh nginx）时没有编译器，先补 common 工具链；
+  # pkg_install 幂等，全量安装时重复调用零开销（与 deps_ocserv 同一处理）
+  deps_common
   # apt 路线：只需 apt 仓库所需的密钥/工具，编译依赖由 nginx 包自带
   if [[ ${CFG_nginx_install:-apt} == apt ]] && os_is_debian; then
     install_group "nginx apt 依赖" nginx_repo
@@ -111,11 +114,15 @@ deps_nginx() {
   # src 路线：源码编译依赖
   install_group "nginx 编译依赖" nginx_src
   # ngx_http_acme_module 用 Rust 写，rust-bindgen 需要 libclang
-  install_group "nginx-acme 模块编译依赖" nginx_acme
+  # 必须写 if：set -e 下「[[ ]] && install_group」在没开 acme 时整行返回 1，会中止函数
+  if [[ -n ${CFG_nginx_acme:-} ]]; then
+    install_group "nginx-acme 模块编译依赖" nginx_acme
+  fi
   ensure_user www-data
 }
 
 deps_php() {
+  deps_common
   install_group "PHP 编译依赖" php
   ensure_user www-data
 }

@@ -31,7 +31,6 @@ readonly PREFIX_PIE="/usr/local/pie"
 readonly OCSERV_SYS="/etc/ocserv"
 
 # apt 路线（nginx_install=apt）使用 nginx.org 官方包的标准路径（仅 apt 路线下引用）
-readonly NGINX_BIN="/usr/sbin/nginx"            # apt 安装后二进制位置
 readonly NGINX_ETC="/etc/nginx"                # apt 安装后配置目录
 readonly NGINX_MODULES="/usr/lib/nginx/modules"  # 官方动态模块 .so 落点
 # 当前生效的 nginx 安装方式（config.ini 的 nginx_install，默认 src）

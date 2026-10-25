@@ -41,8 +41,16 @@ proc_running() {
 }
 
 # --- 无 systemd 时的直接启停实现 -------------------------------------------
-direct_start_nginx()  { "$NGINX_BIN"; }
-direct_stop_nginx()   { "$NGINX_BIN" -s quit 2>/dev/null || true; }
+# nginx 二进制按路线取：apt=/usr/sbin/nginx，src=/usr/local/nginx/sbin/nginx
+_nginx_bin() {
+  if [[ $(nginx_route) == apt ]] && command -v nginx >/dev/null 2>&1; then
+    command -v nginx
+  else
+    printf '%s' "$PREFIX_NGINX/sbin/nginx"
+  fi
+}
+direct_start_nginx()  { "$(_nginx_bin)"; }
+direct_stop_nginx()   { "$(_nginx_bin)" -s quit 2>/dev/null || true; }
 direct_status_nginx() { proc_running nginx; }
 
 direct_start_php_fpm()  { "$PREFIX_PHP/sbin/php-fpm" --daemonize --fpm-config "$PREFIX_PHP/etc/php-fpm.conf"; }
@@ -120,10 +128,13 @@ svc_action() {
         _svc_is_up "$unit" "$svc" && return 1 || return 0 ;;
     esac
   else
+    # 函数名不能带连字符：短名 php-fpm 必须转成 php_fpm 才能拼出 direct_* 函数，
+    # 否则无 systemd（容器）下 php-fpm 的启停/状态全部 127 command not found
+    local fn="${svc//-/_}"
     case "$act" in
-      restart) direct_stop_"$svc"; direct_start_"$svc" ;;
-      status)  direct_status_"$svc" ;;
-      *)       "direct_${act}_${svc}" ;;
+      restart) direct_stop_"$fn"; direct_start_"$fn" ;;
+      status)  direct_status_"$fn" ;;
+      *)       "direct_${act}_${fn}" ;;
     esac
   fi
 }

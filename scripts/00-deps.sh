@@ -53,14 +53,19 @@ pkgs_for() {  # pkgs_for <组名>：按 OS_FAMILY 输出对应包名数组（eva
       # apt 路线仓库工具（仅 debian 家族会走到）
       printf '%s\n' curl gnupg2 ca-certificates lsb-release debian-archive-keyring ;;
     php)
+      # openssl/zlib 必须列在本组：30-php.sh 的 --with-openssl --with-zlib 是硬要求。
+      # 以前全量安装能过，只是因为步骤顺序上 deps_nginx 的 nginx_src 组先把这两个
+      # 包装上了；单独跑 ./scripts/00-deps.sh php + ./install.sh php（README 里写着
+      # 的用法）时它们不在，./configure 直接报错。
       if os_is_debian; then printf '%s\n' \
         libxml2-dev libcurl4-openssl-dev libonig-dev libsqlite3-dev \
         libzip-dev libpng-dev libjpeg-dev libfreetype-dev libwebp-dev \
-        libargon2-dev libsodium-dev libxslt1-dev
+        libargon2-dev libsodium-dev libxslt1-dev libssl-dev zlib1g-dev
       else printf '%s\n' \
         libxml2-devel libcurl-devel oniguruma-devel sqlite-devel \
         libzip-devel libpng-devel libjpeg-turbo-devel freetype-devel \
-        libwebp-devel libargon2-devel libsodium-devel libxslt-devel; fi ;;
+        libwebp-devel libargon2-devel libsodium-devel libxslt-devel \
+        openssl-devel zlib-devel; fi ;;
     mongodb)
       # mongod 运行时链接 libc/libcrypto/libssl/libcurl；最小化系统里 libcurl 未必有
       if os_is_debian; then printf '%s\n' libcurl4 libssl3

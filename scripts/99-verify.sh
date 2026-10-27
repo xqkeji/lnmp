@@ -64,14 +64,18 @@ step_verify() {
   local mods miss=() e
   mods="$("$PREFIX_PHP/bin/php" -m 2>/dev/null)" || true
 
-  for e in zip gd mongodb xqkeji; do
+  # sodium / openssl 也在列：它们由 ./configure 默认开启，但前提是编译时有对应的
+  # 开发包与 pkg-config。缺了 PHP 照样编译成功、只是扩展静默缺席，要等应用调
+  # password_hash / curl https 才暴露，所以在这里就报出来。
+  local -a want_ext=(zip gd mongodb xqkeji sodium openssl)
+  for e in "${want_ext[@]}"; do
     printf '%s\n' "$mods" | grep -qix "$e" || miss+=("$e")
   done
 
   if ((${#miss[@]})); then
     warn "  以下扩展未加载：${miss[*]:-}"
   else
-    info "  zip / gd / mongodb / xqkeji 全部就绪"
+    info "  PHP 扩展全部就绪：${want_ext[*]}"
   fi
 
   local repo_root="${LIB_DIR%/*}"

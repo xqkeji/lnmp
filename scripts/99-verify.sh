@@ -78,6 +78,39 @@ step_verify() {
     info "  PHP 扩展全部就绪：${want_ext[*]}"
   fi
 
+  # 上传目录禁执行 PHP：每个 php location 前都该有 guard，少一段就是少一道闸。
+  # 按数量比对而不是"文件里出现过就算"：一个站点两个 server 块，只加固了一个
+  # 块的情况必须报出来。
+  local etc="$NGINX_ETC"
+  [[ ${CFG_nginx_install:-apt} == src ]] && etc="$PREFIX_NGINX/conf"
+  local guard="$etc/snippets/lnmp-upload-guard.conf"
+  if [[ ! -f $guard ]]; then
+    warn "  上传防护  缺 $guard（重跑 sudo ${ROOT_DIR}/scripts/80-nginx-conf.sh 生成）"
+  else
+    local f n_ok=0 nphp nguard
+    local -a unguard=()
+    for f in "$etc/conf.d"/*.conf; do
+      [[ -f $f ]] || continue
+      [[ "$(basename "$f")" == acme.conf ]] && continue   # http 上下文的公共配置，不含 location
+      nphp=$(grep -cE '^[[:space:]]*location[^;{]*\.php' "$f" || true)
+      ((nphp > 0)) || continue
+      nguard=$(grep -c 'lnmp-upload-guard\.conf' "$f" || true)
+      if (( nguard >= nphp )); then
+        n_ok=$((n_ok + 1))
+      else
+        unguard+=("$(basename "$f") ${nguard}/${nphp}")
+      fi
+    done
+    if ((${#unguard[@]})); then
+      warn "  上传防护  以下站点的 php location 未被 guard 覆盖：${unguard[*]}"
+      warn "            重跑 sudo ${ROOT_DIR}/scripts/80-nginx-conf.sh 会自动注入（改前留 .bak-lnmp）"
+    elif ((n_ok == 0)); then
+      info "  上传防护  片段已就绪（${guard}），conf.d 下暂无 PHP 站点"
+    else
+      info "  上传防护  ${n_ok} 个站点的上传目录已禁执行 PHP（${CFG_upload_dirs:-uploads upload data tmp files}）"
+    fi
+  fi
+
   local repo_root="${LIB_DIR%/*}"
   cat <<EOF
 

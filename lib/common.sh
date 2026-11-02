@@ -33,6 +33,10 @@ readonly OCSERV_SYS="/etc/ocserv"
 # apt 路线（nginx_install=apt）使用 nginx.org 官方包的标准路径（仅 apt 路线下引用）
 readonly NGINX_ETC="/etc/nginx"                # apt 安装后配置目录
 readonly NGINX_MODULES="/usr/lib/nginx/modules"  # 官方动态模块 .so 落点
+# server 上下文公共片段（上传目录禁执行 PHP / PHP 转发）。
+# 刻意不叫 conf.d：conf.d 由 nginx.conf 在 http 上下文整目录 include，
+# 这两段是 location 级配置，放那里 nginx -t 直接报错。
+readonly NGINX_SNIPPETS="/etc/nginx/snippets"
 # 当前生效的 nginx 安装方式（config.ini 的 nginx_install，默认 src）
 nginx_route() { printf '%s' "${CFG_nginx_install:-apt}"; }
 

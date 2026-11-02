@@ -104,6 +104,13 @@ sudo ./scripts/00-deps.sh php            # 只装 PHP 的编译依赖
   两条路线互斥，切换时自动清理已装的另一路线。
 - `nginx_acme` / `acme_domains`：ACME 自动 HTTPS（仅 HTTP-01），域名空格分隔；
   src 路线编译 acme 模块需 Rust ≥1.81，脚本自动经 rsproxy.cn 安装。
+- `upload_dirs`：站点里"只放文件、不该执行代码"的目录名（空格分隔，只要目录名不要
+  路径）。据此生成 `snippets/lnmp-upload-guard.conf`：任意层级的同名目录下
+  `.php/.phtml/.phar/.cgi/.pl/.py/.sh` 一律 404，上传的 webshell 落地也执行不了；
+  PHP 转发段同时带 `try_files $uri =404`，堵住 `/uploads/shell.jpg/x.php` 这类
+  path info。新建站点自带这两段 include；已存在的站点由 `80-nginx-conf.sh` 按
+  server 块自动补 guard include（原文件留 `.bak-lnmp` 备份，注入前后各跑一次
+  `nginx -t`，通不过就回滚）。改了本项重跑 `sudo ./scripts/80-nginx-conf.sh` 生效。
 - `mongodb_distro=auto`：按系统自动挑官方构建名，首选不可用自动回退重试；
   跨构建回退时 `mongodb_sha256` 不要 pin 死。
 - `mongodb_root_user/pass`：安装后初始化的管理员账号，留空则跳过（裸跑无认证）。
@@ -128,11 +135,14 @@ install.sh          主入口（只编排，活都在 scripts/ 下）
 config.ini          所有版本号与开关
 ctrl.sh             服务管理 start/stop/restart/status
 lib/common.sh       常量、日志、下载、幂等状态
-lib/os.sh           发行版探测 + apt/dnf 包管理抽象
+lib/os.sh           系统抽象层入口（按家族 source lib/os/*.sh）
+lib/os/common.sh      发行版探测 + 契约分发 + 幂等安装包装（不含包名）
+lib/os/debian.sh      apt 家族：包管理实现 + 依赖组包名表
+lib/os/rhel.sh        dnf/yum 家族：包管理实现 + EPEL/CRB + 依赖组包名表
 lib/config.sh       读 config.ini（键名白名单，不 eval）
 lib/preflight.sh    环境预检（root、系统家族、架构、端口、磁盘）
 lib/service.sh      服务启停（systemd / 无 systemd 双路径）
-scripts/00-deps.sh  系统依赖库（按家族包表，apt/dnf 分组安装）
+scripts/00-deps.sh  依赖分组入口（装哪一组、为什么装；包名表在 lib/os/ 下）
 scripts/10-nginx.sh       nginx（src / apt 双路线）
 scripts/20-mongodb.sh     MongoDB + mongosh + 账号初始化
 scripts/30-php.sh         PHP 编译
@@ -140,7 +150,7 @@ scripts/40~60-*.sh        Composer / PIE / PHP 扩展
 scripts/70-xqkeji.sh      xqkeji 扩展
 scripts/75-ocserv.sh      ocserv SSL VPN（源码编译 + 配置 + 账号 + 证书）
 scripts/78-firewall.sh    防火墙收紧（仅放行 80/443/VPN 端口，SSH 限本机+VPN 段；含 undo）
-scripts/80-nginx-conf.sh  nginx 配置骨架 + 默认站点
+scripts/80-nginx-conf.sh  nginx 配置骨架 + snippets 公共片段 + 默认站点（含上传目录禁执行注入）
 scripts/90-systemd.sh     systemd 单元 + 开机自启（SELinux/防火墙检测告警）
 scripts/99-verify.sh      安装结果自检
 ```

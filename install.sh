@@ -19,11 +19,14 @@
 #   install.sh             主入口
 #   config.ini             所有版本号，改这里即可升级
 #   lib/common.sh          常量、日志、下载、幂等状态
-#   lib/os.sh              发行版探测 + apt/dnf 包管理抽象
+#   lib/os.sh              系统抽象层入口（按家族 source lib/os/*.sh）
+#     lib/os/common.sh       发行版探测 + 契约分发 + 幂等安装包装
+#     lib/os/debian.sh       apt 家族：包管理实现 + 依赖组包名表
+#     lib/os/rhel.sh         dnf/yum 家族：包管理实现 + EPEL/CRB + 包名表
 #   lib/config.sh          读 config.ini（键名白名单，不 eval）
 #   lib/preflight.sh       环境预检
 #   lib/service.sh         服务启停控制（systemd / 无 systemd 双路径）
-#   scripts/00-deps.sh     系统依赖库（apt/dnf 包名表），按 nginx / php / mongodb 分组
+#   scripts/00-deps.sh     依赖分组入口（装哪组、为什么装；包名表在 lib/os/ 下）
 #   scripts/10-nginx.sh    nginx：apt 安装（默认）/ 源码编译
 #   scripts/20-mongodb.sh  MongoDB + mongosh：下载 + 部署 + 账号初始化
 #   scripts/30-php.sh      PHP：下载 + 编译

@@ -107,7 +107,7 @@ step_verify() {
     elif ((n_ok == 0)); then
       info "  上传防护  片段已就绪（${guard}），conf.d 下暂无 PHP 站点"
     else
-      info "  上传防护  ${n_ok} 个站点的上传目录已禁执行 PHP（${CFG_upload_dirs:-uploads upload data tmp files}）"
+      info "  上传防护  ${n_ok} 个站点的上传目录已禁执行 PHP（${CFG_upload_dirs:-$UPLOAD_DIRS_DEFAULT}）"
     fi
   fi
 

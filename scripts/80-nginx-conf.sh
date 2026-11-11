@@ -32,19 +32,19 @@ source "$LIB_DIR/preflight.sh"
 # 放 snippets/ 而不是 conf.d/：conf.d 被 `include conf.d/*.conf` 在 http 上下文
 # 自动加载，而这两段是 server 上下文的 location/include 行，放进去 nginx -t 直接报错。
 
-# 把 config.ini 的 upload_dirs 拼成正则分支（uploads|upload|data…）。
+# 把 config.ini 的 upload_dirs 拼成正则分支（uploads|upload|assets…）。
 # 目录名只允许常见字符，其它一律丢掉：值要拼进 nginx 正则，不能原样透传。
 # 用 read -a 拆而不是裸 ${...} 展开：后者会把值当 glob，配 `upload_dirs=*`
 # 就把当前目录的文件名当成目录名拼进正则了。
 upload_dirs_regex() {
   local -a list=()
   local d out=""
-  read -r -a list <<<"${CFG_upload_dirs:-uploads upload data tmp files}"
+  read -r -a list <<<"${CFG_upload_dirs:-$UPLOAD_DIRS_DEFAULT}"
   for d in "${list[@]}"; do
     [[ $d =~ ^[A-Za-z0-9_.-]+$ ]] || { warn "  upload_dirs 里 ${d} 含非法字符，已忽略"; continue; }
     out+="${out:+|}${d//./\\.}"
   done
-  [[ -n $out ]] || out="uploads|upload|data|tmp|files"
+  [[ -n $out ]] || out="${UPLOAD_DIRS_DEFAULT// /|}"
   printf '%s' "$out"
 }
 
@@ -56,7 +56,8 @@ gen_snippets() {  # gen_snippets <snippets 目录> <fastcgi_params 路径>
   cat > "$dir/lnmp-upload-guard.conf" <<EOF
 # 由 lnmp 安装器生成（重跑会覆盖，请勿手改；要改目录名改 config.ini 的 upload_dirs）
 # 上传/可写目录里的脚本文件一律不交给 php-fpm。命中即 404，不透露"这里有什么"。
-# 覆盖任意层级与 path info：/uploads/x.php、/a/upload/x.php、/uploads/shell.jpg/x.php
+# 覆盖任意层级与 path info：/uploads/x.php、/a/upload/x.php、/assets/x.php、
+# /uploads/shell.jpg/x.php
 # 必须在站点里 include 到 \`location ~ \.php\$ \` 之前——nginx 的正则 location
 # 按配置文件里出现的先后顺序命中，排后面就等于不生效。
 location ~* "(^|/)(${dirs})/.*\.(php[0-9]*|phtml|phps|phar|cgi|pl|py|sh)\$" {

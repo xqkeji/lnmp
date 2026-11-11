@@ -105,12 +105,16 @@ sudo ./scripts/00-deps.sh php            # 只装 PHP 的编译依赖
 - `nginx_acme` / `acme_domains`：ACME 自动 HTTPS（仅 HTTP-01），域名空格分隔；
   src 路线编译 acme 模块需 Rust ≥1.81，脚本自动经 rsproxy.cn 安装。
 - `upload_dirs`：站点里"只放文件、不该执行代码"的目录名（空格分隔，只要目录名不要
-  路径）。据此生成 `snippets/lnmp-upload-guard.conf`：任意层级的同名目录下
+  路径），默认含 `uploads upload assets data tmp files attachments`——`assets` 是对外
+  发布的静态资源、`upload` 是用户可写目录，两类都不该有代码被执行。据此生成
+  `snippets/lnmp-upload-guard.conf`：任意层级的同名目录下
   `.php/.phtml/.phar/.cgi/.pl/.py/.sh` 一律 404，上传的 webshell 落地也执行不了；
   PHP 转发段同时带 `try_files $uri =404`，堵住 `/uploads/shell.jpg/x.php` 这类
   path info。新建站点自带这两段 include；已存在的站点由 `80-nginx-conf.sh` 按
   server 块自动补 guard include（原文件留 `.bak-lnmp` 备份，注入前后各跑一次
-  `nginx -t`，通不过就回滚）。改了本项重跑 `sudo ./scripts/80-nginx-conf.sh` 生效。
+  `nginx -t`，通不过就回滚）。改了本项重跑 `sudo ./scripts/80-nginx-conf.sh` 覆盖
+  片段文件，再 `sudo ./ctrl.sh restart nginx` 生效——站点里的 include 路径不变，
+  不用逐个站点改配置。
 - `mongodb_distro=auto`：按系统自动挑官方构建名，首选不可用自动回退重试；
   跨构建回退时 `mongodb_sha256` 不要 pin 死。
 - `mongodb_root_user/pass`：安装后初始化的管理员账号，留空则跳过（裸跑无认证）。

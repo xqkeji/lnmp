@@ -57,7 +57,7 @@ readonly PORT_MONGODB=27017
 # 上传/静态目录禁执行 PHP 的兜底目录名（空格分隔）。config.ini 的 upload_dirs
 # 留空或全被过滤掉时用它。只在这里写一份：80-nginx-conf.sh 生成片段、99-verify.sh
 # 报告状态都取这个值，两处各写一遍迟早会漂成两个不同的"默认"。
-readonly UPLOAD_DIRS_DEFAULT="uploads upload assets data tmp files attachments"
+readonly UPLOAD_DIRS_DEFAULT="upload asset"
 
 # 并行编译线程数；config.ini 里的 jobs 会覆盖它
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 2)}"

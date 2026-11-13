@@ -32,7 +32,7 @@ source "$LIB_DIR/preflight.sh"
 # 放 snippets/ 而不是 conf.d/：conf.d 被 `include conf.d/*.conf` 在 http 上下文
 # 自动加载，而这两段是 server 上下文的 location/include 行，放进去 nginx -t 直接报错。
 
-# 把 config.ini 的 upload_dirs 拼成正则分支（uploads|upload|assets…）。
+# 把 config.ini 的 upload_dirs 拼成正则分支（upload|asset…）。
 # 目录名只允许常见字符，其它一律丢掉：值要拼进 nginx 正则，不能原样透传。
 # 用 read -a 拆而不是裸 ${...} 展开：后者会把值当 glob，配 `upload_dirs=*`
 # 就把当前目录的文件名当成目录名拼进正则了。
@@ -56,8 +56,8 @@ gen_snippets() {  # gen_snippets <snippets 目录> <fastcgi_params 路径>
   cat > "$dir/lnmp-upload-guard.conf" <<EOF
 # 由 lnmp 安装器生成（重跑会覆盖，请勿手改；要改目录名改 config.ini 的 upload_dirs）
 # 上传/可写目录里的脚本文件一律不交给 php-fpm。命中即 404，不透露"这里有什么"。
-# 覆盖任意层级与 path info：/uploads/x.php、/a/upload/x.php、/assets/x.php、
-# /uploads/shell.jpg/x.php
+# 覆盖任意层级与 path info：/upload/x.php、/a/upload/x.php、/asset/x.php、
+# /upload/shell.jpg/x.php
 # 必须在站点里 include 到 \`location ~ \.php\$ \` 之前——nginx 的正则 location
 # 按配置文件里出现的先后顺序命中，排后面就等于不生效。
 location ~* "(^|/)(${dirs})/.*\.(php[0-9]*|phtml|phps|phar|cgi|pl|py|sh)\$" {
@@ -69,7 +69,7 @@ EOF
 # 由 lnmp 安装器生成（重跑会覆盖，请勿手改）
 # PHP 转发段。顺序要求：先 include lnmp-upload-guard.conf，再 include 本文件。
 location ~ \.php\$ {
-    # 请求的 .php 必须真实存在，否则 404。少了这一行，/uploads/shell.jpg/nonexistent.php
+    # 请求的 .php 必须真实存在，否则 404。少了这一行，/upload/shell.jpg/nonexistent.php
     # 会带着 fix_pathinfo 交给 php-fpm，落到已存在的 shell.jpg 上被执行。
     try_files \$uri =404;
     fastcgi_pass   127.0.0.1:${PORT_PHP_FPM};

@@ -167,3 +167,7 @@ scripts/99-verify.sh      安装结果自检
 3. **sha256 有则校验**，留空跳过；下载支持多镜像/多构建候选自动回退。
 4. **国内源优先**：gitcode/gitee 镜像、TUNA nginx apt 仓库、rsproxy Rust 工具链，均可在
    config.ini 换回官方源。
+
+## 许可证
+
+本项目以 **AGPL-3.0-only** 发布，条款全文见 [LICENSE](LICENSE)。

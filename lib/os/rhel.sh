@@ -55,6 +55,26 @@ pkg_enable_extra_repos_rhel() {
   fi
 }
 
+# 自签 CA 装进本机信任库：RHEL 家族把 PEM 放进 /etc/pki/ca-trust/source/anchors，
+# 再由 update-ca-trust（ca-certificates 包，common 组已装）重建
+# /etc/pki/tls/certs/ca-bundle.crt。已装且内容一致就跳过，省得每次都重建束文件。
+ca_install_trust_rhel() {
+  local dst="/etc/pki/ca-trust/source/anchors/$(basename "$1")"
+  if [[ -f $dst ]] && cmp -s "$1" "$dst"; then
+    info "  本机信任库里已有该 CA：${dst}"
+    return 0
+  fi
+  if ! command -v update-ca-trust >/dev/null 2>&1; then
+    warn "  缺 update-ca-trust（ca-certificates 包），本机信任库未更新：$1"
+    return 1
+  fi
+  mkdir -p /etc/pki/ca-trust/source/anchors
+  install -m 644 "$1" "$dst"
+  update-ca-trust \
+    || { warn "  update-ca-trust 执行失败，本机信任库未更新"; return 1; }
+  info "  CA 已装进本机信任库：${dst}（撤销：删掉该文件后跑 sudo update-ca-trust extract）"
+}
+
 # --- 依赖组包名表（rhel 家族）-----------------------------------------------
 # 每组"为什么要装"的说明放在 scripts/00-deps.sh 的对应 deps_* 函数里，
 # 那份理由两个家族通用，这里只记包名。

@@ -59,6 +59,18 @@ readonly PORT_MONGODB=27017
 # 报告状态都取这个值，两处各写一遍迟早会漂成两个不同的"默认"。
 readonly UPLOAD_DIRS_DEFAULT="upload asset"
 
+# 本地测试 HTTPS 证书（80-nginx-conf.sh 的 gen_local_tls 生成）：一份自签 CA +
+# 一张由它签发、带 SAN 的站点证书。装进系统信任库的是 CA，站点证书换名字/到期
+# 只管重签，客户端不用重新导入。
+# LOCAL_TLS_NAMES_DEFAULT 是 config.ini 的 local_tls_names 留空时的兜底名单，
+# 和 99-verify.sh 报告的状态同源（同 UPLOAD_DIRS_DEFAULT 的理由，别写两份）。
+readonly LOCAL_TLS_DIR="/usr/local/lnmp/tls"
+readonly LOCAL_TLS_CA="${LOCAL_TLS_DIR}/lnmp-local-ca.crt"
+readonly LOCAL_TLS_CA_KEY="${LOCAL_TLS_DIR}/lnmp-local-ca.key"
+readonly LOCAL_TLS_CRT="${LOCAL_TLS_DIR}/lnmp-local-server.crt"
+readonly LOCAL_TLS_KEY="${LOCAL_TLS_DIR}/lnmp-local-server.key"
+readonly LOCAL_TLS_NAMES_DEFAULT="localhost 127.0.0.1 *.xqkeji.dev"
+
 # 并行编译线程数；config.ini 里的 jobs 会覆盖它
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 2)}"
 

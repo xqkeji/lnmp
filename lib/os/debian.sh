@@ -28,6 +28,29 @@ pkg_install_debian() {
 # nginx.org 官方源的接入由 10-nginx.sh 完成。留空实现只为让契约成立。
 pkg_enable_extra_repos_debian() { return 0; }
 
+# 自签 CA 装进本机信任库：Debian/Ubuntu 只认 /usr/local/share/ca-certificates
+# 下的 .crt（PEM 格式），再由 update-ca-certificates 汇总进
+# /etc/ssl/certs/ca-certificates.crt。工具来自 ca-certificates 包（common 组已装）。
+# 已装且内容一致就直接跳过：update-ca-certificates 每次都要重扫整个证书目录。
+ca_install_trust_debian() {
+  local dst="/usr/local/share/ca-certificates/$(basename "$1")" out
+  if [[ -f $dst ]] && cmp -s "$1" "$dst"; then
+    info "  本机信任库里已有该 CA：${dst}"
+    return 0
+  fi
+  if ! command -v update-ca-certificates >/dev/null 2>&1; then
+    warn "  缺 update-ca-certificates（ca-certificates 包），本机信任库未更新：$1"
+    return 1
+  fi
+  mkdir -p /usr/local/share/ca-certificates
+  install -m 644 "$1" "$dst"
+  if ! out="$(update-ca-certificates 2>&1)"; then
+    warn "  update-ca-certificates 执行失败：$(printf '%s' "$out" | tail -1)"
+    return 1
+  fi
+  info "  CA 已装进本机信任库：${dst}（撤销：删掉该文件后跑 sudo update-ca-certificates --fresh）"
+}
+
 # --- 依赖组包名表（debian 家族）---------------------------------------------
 # 每组"为什么要装"的说明放在 scripts/00-deps.sh 的对应 deps_* 函数里，
 # 那份理由两个家族通用，这里只记包名。

@@ -36,7 +36,7 @@
 #   scripts/70-xqkeji.sh   xqkeji 扩展
 #   scripts/75-ocserv.sh   ocserv SSL VPN（下载 + meson 编译 + 配置/账号/证书）
 #   scripts/78-firewall.sh 主机防火墙收紧（对外仅 80/443/ocserv 端口，SSH 限本机+VPN 段；ocserv 步骤自动调用）
-#   scripts/80-nginx-conf.sh nginx 配置骨架
+#   scripts/80-nginx-conf.sh nginx 配置骨架 + 本地测试 HTTPS（自签 CA 与站点证书）
 #   scripts/90-systemd.sh  systemd 单元 + 启动
 #   scripts/99-verify.sh   结果自检
 #   ctrl.sh                服务管理：start/stop/restart/status（仓库根目录）

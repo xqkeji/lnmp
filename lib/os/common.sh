@@ -12,12 +12,13 @@
 #   pkg_install_<family> <包...>         真正调包管理器安装
 #   pkgs_for_<family> <组名>             该家族的依赖组包名表
 #   pkg_enable_extra_repos_<family>      启用 EPEL/CRB 这类额外仓库
+#   ca_install_trust_<family> <证书文件> 把自签 CA 装进系统信任（两个家族都要实现）
 # 缺哪个就 die，不会静默跳过（静默跳过的后果是编译到一半才发现缺依赖）。
 #
 # 对外契约（组件脚本只用这些）：
 #   detect_os / os_is_debian / os_is_rhel
 #   pkg_update_once / pkg_installed / pkg_install / pkg_install_any
-#   pkgs_for / pkg_enable_extra_repos
+#   pkgs_for / pkg_enable_extra_repos / ca_install_trust
 # ============================================================================
 
 [[ -n ${_LNMP_LIB_OS_COMMON:-} ]] && return 0
@@ -86,6 +87,12 @@ __os_dispatch() {  # __os_dispatch <契约名> <参数...>
 pkg_installed() { __os_dispatch pkg_installed "$1"; }
 pkgs_for() { __os_dispatch pkgs_for "$1"; }
 pkg_enable_extra_repos() { __os_dispatch pkg_enable_extra_repos; }
+
+# ca_install_trust <CA 证书文件>：把自签 CA 装进"本机"信任库，让本机 curl /
+# php / openssl verify 认这份证书。只影响服务器自己；访问者的设备要各自导入，
+# 那一步在 README 里说明。装不上（缺 ca-certificates / ca-trust 工具）只告警：
+# 证书本身照样能用，浏览器点"继续访问"即可，不该因此中断整个 nginx 配置步骤。
+ca_install_trust() { __os_dispatch ca_install_trust "$1"; }
 
 # 元数据刷新全流程只做一次：apt 不显式 update 就用旧索引，dnf/yum 的 install
 # 自带刷新（所以 rhel 那边的实现是空函数，见 lib/os/rhel.sh）

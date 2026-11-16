@@ -111,6 +111,36 @@ step_verify() {
     fi
   fi
 
+  # 本地测试 HTTPS（80-nginx-conf.sh 的 gen_local_tls）。这里只读状态不补签：
+  # 名单改动、证书重签都归 80 号脚本，自检偷偷生成会让"配置和盘上不是一回事"
+  # 这件事永远看不见。
+  if [[ -n ${CFG_local_tls_names:-} ]]; then
+    local tls_vhost="$etc/conf.d/local-tls.conf" tls_end="" tls_bad=""
+    if [[ -s $LOCAL_TLS_CRT && -s $LOCAL_TLS_KEY ]]; then
+      tls_end="$(openssl x509 -in "$LOCAL_TLS_CRT" -noout -enddate 2>/dev/null | sed 's/^notAfter=//')" || true
+      # 多个问题用"、"接在同一行报出来，别为每件事各刷屏
+      openssl x509 -in "$LOCAL_TLS_CRT" -noout -checkend 2592000 >/dev/null 2>&1 \
+        || tls_bad="${tls_bad:+${tls_bad}、}剩余有效期不足 30 天"
+      # 链这一项单独查：CA 被重建过、站点证书还是旧 CA 签的，nginx 起得来、
+      # 浏览器只报"证书链不完整"，光比名单和有效期发现不了
+      openssl verify -CAfile "$LOCAL_TLS_CA" "$LOCAL_TLS_CRT" >/dev/null 2>&1 \
+        || tls_bad="${tls_bad:+${tls_bad}、}证书链不通到当前 CA"
+    else
+      tls_bad="缺证书文件"
+    fi
+    [[ -f $tls_vhost ]] || tls_bad="${tls_bad:+${tls_bad}、}缺站点 ${tls_vhost}"
+
+    if [[ -n $tls_bad ]]; then
+      warn "  本地 TLS  ${tls_bad}（重跑 sudo ${ROOT_DIR}/scripts/80-nginx-conf.sh 会自动补齐）"
+    else
+      info "  本地 TLS  就绪，到期 ${tls_end:-未知}"
+      info "            证书 ${LOCAL_TLS_CRT} / CA ${LOCAL_TLS_CA}"
+      info "            站点 ${tls_vhost}（已存在则保留：改了名单要手工同步里面的 server_name）"
+      info "            名单 ${CFG_local_tls_names}"
+      info "            设备侧只导入 CA 这一份即可（本机信任库脚本已处理，撤销方式见 README）"
+    fi
+  fi
+
   local repo_root="${LIB_DIR%/*}"
   cat <<EOF
 

@@ -133,6 +133,47 @@ sudo ./scripts/00-deps.sh php            # 只装 PHP 的编译依赖
   config.ini 里的密码顶掉你手工改过的密码；只有点名一个文件里没有的用户名才当新增。
   官网只提供 ftp:// 下载，国内不通时可填 `ocserv_url` 镜像整段 URL。
 
+- `local_tls_names`：本地测试 HTTPS 的域名名单（空格分隔），默认
+  `localhost 127.0.0.1 *.xqkeji.dev`，**留空即关闭**这个功能。详见下面「本地测试 HTTPS」。
+
+## 本地测试 HTTPS（localhost / 127.0.0.1 / *.xqkeji.dev）
+
+`local_tls_names` 非空时，`80-nginx-conf.sh` 会准备一份自签 CA 加一张由它签发的站点证书，
+并生成 `conf.d/local-tls.conf`（443 + 上面这份名单）：
+
+- CA：`/usr/local/lnmp/tls/lnmp-local-ca.crt`（私钥同目录，有效期 10 年）
+- 站点证书：`lnmp-local-server.crt`（825 天，SAN = 名单；天数照 mkcert 取值，超过 825 天
+  macOS/iOS 直接拒绝）
+
+为什么不直接自签一张站点证书：`.dev` / `.app` 在浏览器 HSTS 预加载名单里，证书不受信时连
+"继续访问"按钮都没有，只能把 CA 导进设备信任库。导入的是 CA，之后证书到期或改名单只管重签
+（重跑 `sudo ./scripts/80-nginx-conf.sh`），设备不用再导第二次。CA 同时会装进服务器自己的
+信任库，本机 `curl https://localhost` 也不报错。
+
+重签条件：SAN 名单变了、证书链不通到当前 CA、或剩余有效期不足 30 天，三者都不满足就复用现有
+文件。`conf.d/local-tls.conf` 已存在则保留，改了名单要自己同步里面的 `server_name`。
+
+设备侧导入 CA（先把 `lnmp-local-ca.crt` 从服务器拷到本机）：
+
+| 设备 | 导入 | 撤销 |
+| --- | --- | --- |
+| Windows | `certutil -addstore -f ROOT lnmp-local-ca.crt` | `certutil -delstore ROOT "lnmp Local Testing CA"` |
+| macOS | `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain lnmp-local-ca.crt` | 钥匙串访问里删除该证书 |
+| Linux（Debian/Ubuntu） | `sudo cp lnmp-local-ca.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates` | 删掉该文件后 `sudo update-ca-certificates --fresh` |
+| Linux（RHEL 家族） | `sudo cp lnmp-local-ca.crt /etc/pki/ca-trust/source/anchors/ && sudo update-ca-trust` | 删掉该文件后 `sudo update-ca-trust extract` |
+| Firefox | 设置 → 隐私与安全 → 证书 → 导入（Firefox 用自己的库，不跟系统） | 同处删除 |
+| Android | 设置 → 安全 → 加密与凭据 → 安装证书 → CA 证书 | 同处删除 |
+| iOS | 隔空投送/下载 .crt → 描述文件安装 → 设置 → 通用 → 关于本机 → 信任证书 | 删除描述文件 |
+
+两个坑：
+
+- `*.xqkeji.dev` 只覆盖**一层**标签，且不含主域本身：`a.xqkeji.dev` 命中，`xqkeji.dev` 和
+  `a.b.xqkeji.dev` 都不命中。需要就往名单里加，重跑脚本会重签。
+- 用 IP 访问（`https://127.0.0.1/`）时客户端不发 SNI，nginx 只能按"该端口的默认服务器"选
+  证书。`local-tls.conf` 在 `conf.d` 里排序靠前，默认就是它；这份文件刻意不写
+  `default_server`，避免和你自己站点里的声明撞成 `nginx -t` 报错——若你的站点已声明
+  `default_server`，无 SNI 的请求归那个站点，本地证书不会被选中。
+
 ## 代码结构
 
 ```
@@ -155,7 +196,7 @@ scripts/40~60-*.sh        Composer / PIE / PHP 扩展
 scripts/70-xqkeji.sh      xqkeji 扩展
 scripts/75-ocserv.sh      ocserv SSL VPN（源码编译 + 配置 + 账号 + 证书）
 scripts/78-firewall.sh    防火墙收紧（仅放行 80/443/VPN 端口，SSH 限本机+VPN 段；含 undo）
-scripts/80-nginx-conf.sh  nginx 配置骨架 + snippets 公共片段 + 默认站点（含上传目录禁执行注入）
+scripts/80-nginx-conf.sh  nginx 配置骨架 + snippets 公共片段 + 默认站点（含上传目录禁执行注入、本地测试 HTTPS 证书）
 scripts/90-systemd.sh     systemd 单元 + 开机自启（SELinux/防火墙检测告警）
 scripts/99-verify.sh      安装结果自检
 ```

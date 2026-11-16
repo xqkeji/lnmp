@@ -15,6 +15,13 @@
 #   - 新生成的站点直接 include 这两段；已存在的站点由本脚本按 server 块自动注入
 #     guard（原文件留 .bak-lnmp 备份），注入前后各跑一次 nginx -t，失败即回滚。
 #
+# 本地测试 HTTPS（config.ini 的 local_tls_names 非空时）：
+#   - 自建一份 CA（/usr/local/lnmp/tls/lnmp-local-ca.crt，已存在就复用），用它
+#     签一张带 SAN 的站点证书，装进本机信任库；设备侧导入同一个 CA。
+#   - 生成 conf.d/local-tls.conf：443 + 这份证书，server_name 取同一份名单，
+#     所以 https://localhost、https://127.0.0.1、https://任意子域.xqkeji.dev 都能
+#     直接访问本机站点，不用公网域名也不走 ACME。
+#
 # apt 路线（默认）：nginx.conf 由 nginx.org 包提供，本脚本不动它，只注入
 #   load_module 绝对路径 + 生成 conf.d；html 根用 /usr/share/nginx/html，
 #   acme 状态目录属主用 nginx（包建的用户）。
@@ -132,6 +139,226 @@ nginx_conf_test() {  # nginx_conf_test <nginx 可执行文件>；通过返回 0
   fi
   warn "  nginx -t 未通过：$(printf '%s' "$out" | tr '\n' ' ' | tail -c 300)"
   return 1
+}
+
+# --- 本地测试 HTTPS（自签 CA + 站点证书）-----------------------------------
+# 为什么是"一份 CA + CA 签的站点证书"，而不是直接自签一张站点证书：
+# .dev / .app 这类后缀在浏览器 HSTS 预加载名单里，证书不受信时连"继续访问"
+# 按钮都没有；有了自己的 CA，把 CA 导进设备信任库一次，之后站点证书到期或改
+# 名字只管重签，设备不用再动第二次。
+# 有效期照 mkcert 的取值：CA 10 年、站点证书 825 天（超过这个天数 macOS/iOS
+# 直接拒绝，签 10 年的站点证书等于白签）。
+
+# config.ini 的 local_tls_names → 规范化的名字列表（空格分隔，非法项丢掉）。
+# 这份名单既进证书 SAN 也进 nginx 的 server_name，所以必须先过字面白名单：
+# 值里带空格或引号就能往 nginx 配置里塞任意指令。
+# 用 read -a 拆而不是裸 ${...}：后者会把 `*.xqkeji.dev` 当 glob 展开成当前目录
+# 的真实文件名。
+local_tls_names() {
+  local -a list=()
+  local n out=""
+  read -r -a list <<<"${CFG_local_tls_names:-$LOCAL_TLS_NAMES_DEFAULT}"
+  for n in "${list[@]}"; do
+    [[ $n =~ ^(\*\.)?[A-Za-z0-9_-]+([.][A-Za-z0-9_-]+)*$ || $n =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+      || { warn "  local_tls_names 里 ${n} 含非法字符，已忽略"; continue; }
+    out+="${out:+ }${n}"
+  done
+  [[ -n $out ]] || out="$LOCAL_TLS_NAMES_DEFAULT"
+  printf '%s' "$out"
+}
+
+# 名字列表 → 每行一条的 SAN 条目（DNS:x / IP:x）。IPv4 必须写成 IP:：
+# 只写 DNS:127.0.0.1 的话，证书里根本没有 127.0.0.1 这个 IP 项，浏览器按 IP
+# 访问照样报名字不匹配。
+tls_san_list() {  # tls_san_list <名字列表>
+  local -a arr=()
+  local n
+  read -r -a arr <<<"$1"
+  for n in "${arr[@]}"; do
+    if [[ $n =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      printf 'IP:%s\n' "$n"
+    else
+      printf 'DNS:%s\n' "$n"
+    fi
+  done
+}
+
+# SAN 条目（按行从 stdin 读）→ openssl 配置的 [alt_names] 段：DNS.n 与 IP.n
+# 各自独立编号，不能共用一个序号。
+tls_alt_names() {
+  local e dns=0 ip=0
+  while IFS= read -r e; do
+    [[ -n $e ]] || continue
+    case "$e" in
+      IP:*) printf 'IP.%d  = %s\n'  $((++ip))  "${e#IP:}" ;;
+      *)    printf 'DNS.%d = %s\n' $((++dns)) "${e#DNS:}" ;;
+    esac
+  done
+}
+
+# 已签发证书里的 SAN → 与 tls_san_list 同格式的排序列表，用来判断名字集合变没变。
+# -ext 需要 openssl ≥1.1.1（本仓库支持的发行版全部满足）；取不到就当没有。
+tls_san_norm() {  # tls_san_norm <证书文件>
+  openssl x509 -in "$1" -noout -ext subjectAltName 2>/dev/null \
+    | tail -n +2 | tr ',' '\n' \
+    | sed -e 's/^[[:space:]]*//' -e 's/^IP Address:/IP:/' \
+    | { grep -E '^(DNS|IP):' || true; } \
+    | LC_ALL=C sort -u
+}
+
+gen_local_tls() {  # gen_local_tls <名字列表>；把 CA 与站点证书准备到位
+  local names="$1" want have cn serial
+  want="$(tls_san_list "$names" | LC_ALL=C sort -u)"
+  serial="$LOCAL_TLS_DIR/lnmp-local-ca.srl"
+
+  need_cmd openssl
+  mkdir -p "$LOCAL_TLS_DIR"
+  chmod 755 "$LOCAL_TLS_DIR"
+
+  # --- CA：已存在就复用。换 CA 意味着每台设备的信任都要重新导一遍 ------------
+  if [[ ! -s $LOCAL_TLS_CA || ! -s $LOCAL_TLS_CA_KEY ]]; then
+    if [[ -s $LOCAL_TLS_CA || -s $LOCAL_TLS_CA_KEY ]]; then
+      warn "  CA 的证书或私钥只剩一个，重新生成一对（已导入旧 CA 的设备需重新导入）"
+      rm -f "$LOCAL_TLS_CA" "$LOCAL_TLS_CA_KEY" "$serial"
+    fi
+    info "  生成本地测试 CA：${LOCAL_TLS_CA}"
+    local ca_cnf
+    ca_cnf="$(mktemp)"
+    cat > "$ca_cnf" <<EOF
+[req]
+distinguished_name = dn
+x509_extensions    = ca_ext
+prompt             = no
+
+[dn]
+O  = lnmp
+CN = lnmp Local Testing CA
+
+[ca_ext]
+basicConstraints   = critical,CA:TRUE,pathlen:0
+keyUsage           = critical,keyCertSign,cRLSign
+subjectKeyIdentifier = hash
+EOF
+    # umask 077：私钥落盘那一刻就不能被其它用户读到
+    ( umask 077
+      openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+        -keyout "$LOCAL_TLS_CA_KEY" -out "$LOCAL_TLS_CA" -config "$ca_cnf" ) >/dev/null 2>&1 \
+      || { rm -f "$ca_cnf"; die "生成本地测试 CA 失败（openssl req -x509）"; }
+    rm -f "$ca_cnf"
+    chmod 644 "$LOCAL_TLS_CA"
+  else
+    info "  本地测试 CA 已存在，复用：${LOCAL_TLS_CA}"
+  fi
+  ca_install_trust "$LOCAL_TLS_CA" \
+    || warn "  CA 没装进本机信任库（服务器自己 curl 本地 https 仍会报证书错误），设备侧要手动导入"
+
+  # --- 站点证书：名字集合变了、链不通到当前 CA、或剩余有效期不足 30 天就重签 ---
+  # 链这一项不能省：CA 只剩半个文件时上面会重建一对，旧站点证书是新 CA 签不出来的
+  # 但名字集合没变、也没到期，只比这两样就会把一张链不通过的证书留在原地，
+  # nginx 起得来、浏览器却报"证书链不完整"，而且每次重跑都发现不了。
+  have=""
+  if [[ -s $LOCAL_TLS_CRT && -s $LOCAL_TLS_KEY ]]; then
+    have="$(tls_san_norm "$LOCAL_TLS_CRT")"
+    openssl verify -CAfile "$LOCAL_TLS_CA" "$LOCAL_TLS_CRT" >/dev/null 2>&1 || have=""
+  fi
+  if [[ $have == "$want" ]] \
+     && openssl x509 -in "$LOCAL_TLS_CRT" -noout -checkend 2592000 >/dev/null 2>&1; then
+    info "  站点证书已覆盖这些名字且离到期还早，不重签：${LOCAL_TLS_CRT}"
+    return 0
+  fi
+
+  cn="${names%% *}"
+  cn="${cn#\*.}"
+  info "  签发站点证书（$(printf '%s' "$want" | tr '\n' ' ')）"
+  local srv_cnf srv_csr
+  srv_cnf="$(mktemp)"
+  srv_csr="$(mktemp)"
+# 签名走 [x509_ext] 而不是 CSR 里的 [req_ext]：openssl x509 -req 默认不把 CSR 的
+# 请求扩展带进证书，只签 req_ext 会得到一张只有 SAN、没有 basicConstraints/EKU
+# 的证书——openssl verify -purpose sslserver 不通过，部分客户端也直接拒。
+# 注意这段是无引号 heredoc：内容里出现反引号或 \$( ) 就是让 shell 现场执行它。
+  {
+    cat <<EOF
+[req]
+distinguished_name = dn
+req_extensions     = req_ext
+prompt             = no
+
+[dn]
+O  = lnmp
+CN = ${cn}
+
+[req_ext]
+subjectAltName = @alt_names
+
+[x509_ext]
+basicConstraints     = critical,CA:FALSE
+keyUsage             = critical,digitalSignature,keyEncipherment
+extendedKeyUsage     = serverAuth
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+subjectAltName       = @alt_names
+
+[alt_names]
+EOF
+    tls_san_list "$names" | tls_alt_names
+  } > "$srv_cnf"
+
+  ( umask 077
+    openssl req -new -newkey rsa:2048 -sha256 -nodes \
+      -keyout "$LOCAL_TLS_KEY" -out "$srv_csr" -config "$srv_cnf"
+    openssl x509 -req -sha256 -days 825 -in "$srv_csr" \
+      -CA "$LOCAL_TLS_CA" -CAkey "$LOCAL_TLS_CA_KEY" -CAcreateserial -CAserial "$serial" \
+      -extfile "$srv_cnf" -extensions x509_ext -out "$LOCAL_TLS_CRT" ) >/dev/null 2>&1 \
+    || { rm -f "$srv_cnf" "$srv_csr"; die "生成本地站点证书失败（openssl req/x509）"; }
+  rm -f "$srv_cnf" "$srv_csr"
+  chmod 600 "$LOCAL_TLS_KEY"
+  chmod 644 "$LOCAL_TLS_CRT" "$serial"
+  info "  已生成 ${LOCAL_TLS_CRT}（825 天）；设备侧导入 ${LOCAL_TLS_CA} 即可无告警用 https"
+}
+
+# 本地测试站点：443 + 上述证书。放独立文件而不是往 default.conf 里加 listen，
+# 是因为 default.conf 已存在就保留（不吃用户改动），加了也只在新建站点时生效。
+gen_local_tls_vhost() {  # gen_local_tls_vhost <conf.d 目录> <名字列表> <站点根> <include...>
+  local confd="$1" names="$2" html_root="$3" inc_upload="$4" inc_php="$5" f
+  f="$confd/local-tls.conf"
+  if [[ -f $f ]]; then
+    info "  conf.d/local-tls.conf 已存在，保留（名字改了要改这份文件里的 server_name）"
+    return 0
+  fi
+  cat > "$f" <<EOF
+# 由 lnmp 安装器生成：本地测试 HTTPS（自签 CA，SAN=${names// /, }）
+# 只在证书覆盖到的名字上生效；公网域名仍由各自的站点处理。
+# 用 IP 直接访问（https://127.0.0.1/）时浏览器不发 SNI，nginx 只能按"该端口的
+# 默认服务器"选证书——本文件在 conf.d 里排在 xqkeji.cn.conf 之前，所以默认就是它；
+# 若你自己的站点写了 default_server，那条规则归你的站点，这里刻意不声明，
+# 免得两处 default_server 撞成 nginx -t 报错（duplicate default server）。
+# enforcing SELinux 下 nginx 读不到本证书时，日志是 Permission denied 而不是
+# 语法错误：chcon -Rt cert_t ${LOCAL_TLS_DIR}
+server {
+    listen 443 ssl;
+    server_name ${names};
+
+    root   ${html_root};
+    index  index.php index.html;
+
+    ssl_certificate     ${LOCAL_TLS_CRT};
+    ssl_certificate_key ${LOCAL_TLS_KEY};
+    ssl_protocols TLSv1.2 TLSv1.3;
+    # zone 名不能和 xqkeji.cn.conf 里的 shared:SSL 重名又给不同大小，那样 nginx -t 报错
+    ssl_session_cache   shared:LocalTLS:10m;
+    ssl_session_timeout 1d;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+
+    # 上传目录禁执行 + PHP 转发（顺序不能换：guard 必须在 \.php 之前）
+    include ${inc_upload};
+    include ${inc_php};
+}
+EOF
+  info "  已生成 conf.d/local-tls.conf（https://localhost 等名字走本地证书）"
 }
 
 step_nginx_conf() {
@@ -337,6 +564,16 @@ EOF
     else
       info "  conf.d/xqkeji.cn.conf 已存在，保留（稍后按 server 块自动注入上传防护）"
     fi
+  fi
+
+  # --- 本地测试 HTTPS（localhost / 127.0.0.1 / *.xqkeji.dev 之类）----------
+  # 与 acme 那套公网 HTTPS 互不影响：这份只按 local_tls_names 命中，不声明
+  # default_server，公网域名的请求不会被它截走。
+  if [[ -n ${CFG_local_tls_names:-} ]]; then
+    local tls_names
+    tls_names="$(local_tls_names)"
+    gen_local_tls "$tls_names"
+    gen_local_tls_vhost "$etc/conf.d" "$tls_names" "$html_root" "$inc_upload" "$inc_php"
   fi
 
   # --- 给已存在的站点补上传防护 --------------------------------------------

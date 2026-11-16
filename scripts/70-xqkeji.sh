@@ -101,10 +101,12 @@ install_xqkeji() {
   local ext_dir
   ext_dir="$("$PREFIX_PHP/bin/php-config" --extension-dir)"
 
-  # tag 里的 -phpX.Y 必须和实际装的 PHP 对得上
+  # 只有旧命名（v1.2.1-php8.5）的 tag 里带 PHP 小版本，可以先粗比对一次；
+  # 新命名（v1.2.2）不带，因为那种后缀会让 Composer/Packagist 判成非法版本号。
+  # 不带后缀时这里没得比，真正的判定是下面那次"让 PHP 试着加载"。
   local php_mm
   php_mm="$("$php_bin" -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;')"
-  if [[ $tag != *"-php${php_mm}" ]]; then
+  if [[ $tag == *-php* && $tag != *"-php${php_mm}" ]]; then
     warn "  tag '$tag' 与已安装 PHP ${php_mm} 不匹配，继续但很可能加载失败"
   fi
 

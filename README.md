@@ -174,12 +174,46 @@ sudo ./scripts/00-deps.sh php            # 只装 PHP 的编译依赖
   `default_server`，避免和你自己站点里的声明撞成 `nginx -t` 报错——若你的站点已声明
   `default_server`，无 SNI 的请求归那个站点，本地证书不会被选中。
 
+## 新增站点（本地 / 公网域名）
+
+`bin/add-site.sh` 一条命令登记一个站点，不必重跑 `install.sh`：
+
+```bash
+sudo ./bin/add-site.sh crm                     # 项目目录默认 www/crm
+sudo ./bin/add-site.sh crm /path/to/project    # 也可显式指定（原生安装无挂载限制，任意位置均可）
+```
+
+项目结构参照 dnmmp：站点入口是 `<项目目录>/www`，**必须已存在**，否则报错且不写任何配置。默认项目目录在本仓库根的 `www/` 下（已加入 `.gitignore`，用户项目不进 git）。
+
+命令会**交互询问站点域名**：
+
+- **回车用默认 `<name>.xqkeji.dev`** → 按 `config.ini` 的 `local_tls_names` 实际名单判定：精确命中或一级通配命中（`*.xqkeji.dev` 不含主域本身）走本地路径——复用 80-nginx-conf.sh 生成的本地测试证书（**无需重签**），并在 `/etc/hosts` 追加 `127.0.0.1 <域名>`。
+- **输入其它域名（如 `crm.example.com`）** → 公网站点：ngx_http_acme_module 自动签发并续期 Let's Encrypt 证书，复用已有的 `conf.d/acme.conf`，不写 hosts。
+- 非交互环境（管道、钩子）不提问，直接用默认域名；环境变量 `ADD_SITE_DOMAIN=<域名>` 可显式指定（供脚本化使用）。
+
+生成的 `conf.d/<name>.conf`：80 端口 301 跳转 https（ACME 站点豁免 `/.well-known/acme-challenge/` 供模块响应验证），443 ssl + `server_name <域名>` + `root <项目目录>/www`，并 include `snippets/lnmp-upload-guard.conf` 与 `snippets/lnmp-php.conf` 两段公共片段（上传目录禁执行 + PHP 转发，与默认站点同款防护）。
+
+**公网域名的前提**（脚本会逐项预检，不满足直接报错并给出修复命令）：
+
+- `config.ini` 的 `nginx_acme` 非空（ACME 已启用），且 80-nginx-conf.sh 已跑过（`load_module` 已注入、`conf.d/acme.conf` 已生成）；
+- 域名 DNS A 记录已指向本机公网 IP；80 端口公网可达（防火墙收紧策略已放行 80/443，HTTP-01 验证走 80）；
+- ACME 模块仅支持 HTTP-01，**签不了泛域名证书**，每个站点各签一张。签发是异步的（首次需几秒到几十秒），进度与失败原因见 `/var/log/nginx/error.log`。
+
+本地路径的前提：`local_tls_names` 非空且本地测试证书已生成。`xqkeji.dev` 是本地测试占位域名，名单关闭或不含它时脚本会拦下默认域名，不会让它悄悄走 ACME。
+
+**幂等**：`<name>.conf` 已存在不覆盖；域名已被其它配置的 `server_name` 占用就跳过（按完整 token 比对，`othercrm.xqkeji.dev` 不算占用 `crm.xqkeji.dev`；通配符覆盖不算占用，精确 `server_name` 优先于通配）；hosts 里已有该域名（大小写不同、与其它域名同行都算已有）就跳过追加。`nginx -t` 不通过时删掉刚生成的配置再报错，原有站点不受影响；找不到可执行的 nginx 时只告警，配置留给下次启动。
+
+新站点不声明 `default_server`（lnmp 现有约定）：`https://127.0.0.1/` 这类无 SNI 的 IP 访问归 `conf.d` 字母序最前的 443 站点，请始终用域名访问。
+
+fast-admin 用 `composer create-project` 建项目时会自动向上找到并执行 `bin/add-site.sh`（与 dnmmp / wnmmp 同一约定路径，项目建在本仓库 `www/` 下即可被找到）。登记需要 root：composer 以普通用户运行时脚本会提示改用 `sudo ./bin/add-site.sh <name> "项目目录"` 手动补登记，项目创建本身不受影响。
+
 ## 代码结构
 
 ```
 install.sh          主入口（只编排，活都在 scripts/ 下）
 config.ini          所有版本号与开关
 ctrl.sh             服务管理 start/stop/restart/status
+bin/add-site.sh     登记站点（交互选域名：本地测试证书+hosts / ACME 自动签发，见「新增站点」）
 lib/common.sh       常量、日志、下载、幂等状态
 lib/os.sh           系统抽象层入口（按家族 source lib/os/*.sh）
 lib/os/common.sh      发行版探测 + 契约分发 + 幂等安装包装（不含包名）

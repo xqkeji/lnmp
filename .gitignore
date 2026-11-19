@@ -1,1 +1,4 @@
 /.workbuddy/memory
+
+# 用户站点项目（scripts/add-site.sh 登记，结构 www/<name>/www）
+/www/
